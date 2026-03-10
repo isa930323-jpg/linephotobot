@@ -18,23 +18,23 @@ cloudinary.config({
 
 const client = new line.Client(config);
 
-// 【1. Webhook 路由：放在最前面，不經過任何密碼保護】
+// 【1. Webhook 路由：不設保護】
 app.post('/callback', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => { console.error(err); res.status(500).end(); });
 });
 
-// 【2. 密碼保護區：從這裡開始的所有請求都要驗證】
+// 【2. 密碼保護：保護以下所有靜態頁面與 API】
 app.use(basicAuth({
     users: { [process.env.WEB_USER]: process.env.WEB_PASS },
     challenge: true,
     realm: 'MyLineAlbum'
 }));
 
-// 【3. 靜態網頁與 API：被保護的區域】
 app.use(express.static(path.join(__dirname, 'public')));
 
+// 取得圖片列表
 app.get('/api/images', async (req, res) => {
   try {
     const { resources } = await cloudinary.search
@@ -42,8 +42,16 @@ app.get('/api/images', async (req, res) => {
       .sort_by('created_at', 'desc')
       .max_results(20)
       .execute();
-    res.json(resources.map(img => ({ url: img.secure_url, time: img.created_at })));
+    res.json(resources.map(img => ({ url: img.secure_url, time: img.created_at, public_id: img.public_id })));
   } catch (error) { res.status(500).send(error.message); }
+});
+
+// 刪除圖片功能
+app.delete('/api/images/:public_id', async (req, res) => {
+    try {
+        await cloudinary.uploader.destroy(req.params.public_id);
+        res.json({ success: true });
+    } catch (error) { res.status(500).send(error.message); }
 });
 
 async function handleEvent(event) {
