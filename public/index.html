@@ -23,6 +23,7 @@
             container.innerHTML = data.map(item => `
                 <div class="card">
                     <img src="${item.url}">
+                    <div style="font-size:0.8em; color:#888;">${new Date(item.time).toLocaleString()}</div>
                     <button onclick="deleteImage('${item.public_id}')">刪除照片</button>
                 </div>
             `).join('');
@@ -30,9 +31,15 @@
 
         async function deleteImage(publicId) {
             if (!confirm("確定要刪除這張照片嗎？")) return;
-            // 【修正重點】使用編碼後的 URL 傳遞 ID
-            await fetch(`/api/images?id=${encodeURIComponent(publicId)}`, { method: 'DELETE' });
-            loadImages();
+            // 【最終修正】改用 Query String 傳遞，並進行 URL 編碼
+            const res = await fetch(`/api/images?id=${encodeURIComponent(publicId)}`, { 
+                method: 'DELETE' 
+            });
+            if (res.ok) {
+                loadImages();
+            } else {
+                alert("刪除失敗");
+            }
         }
         loadImages();
     </script>
