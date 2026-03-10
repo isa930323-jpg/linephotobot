@@ -2,10 +2,9 @@ const express = require('express');
 const line = require('@line/bot-sdk');
 const cloudinary = require('cloudinary').v2;
 const path = require('path');
-const basicAuth = require('express-basic-auth'); // 記得 npm install express-basic-auth
+const basicAuth = require('express-basic-auth');
 const app = express();
 
-// 設定環境變數
 const config = {
   channelAccessToken: process.env.LINE_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -19,21 +18,32 @@ cloudinary.config({
 
 const client = new line.Client(config);
 
-// 【登入防護】後端 Basic Auth
+// 【1. Webhook 路由：放在最前面，不經過任何密碼保護】
+app.post('/callback', line.middleware(config), (req, res) => {
+  Promise.all(req.body.events.map(handleEvent))
+    .then((result) => res.json(result))
+    .catch((err) => { console.error(err); res.status(500).end(); });
+});
+
+// 【2. 密碼保護區：從這裡開始的所有請求都要驗證】
 app.use(basicAuth({
     users: { [process.env.WEB_USER]: process.env.WEB_PASS },
     challenge: true,
     realm: 'MyLineAlbum'
 }));
 
-// 託管靜態網頁
+// 【3. 靜態網頁與 API：被保護的區域】
 app.use(express.static(path.join(__dirname, 'public')));
 
-// LINE Webhook
-app.post('/callback', line.middleware(config), (req, res) => {
-  Promise.all(req.body.events.map(handleEvent))
-    .then((result) => res.json(result))
-    .catch((err) => { console.error(err); res.status(500).end(); });
+app.get('/api/images', async (req, res) => {
+  try {
+    const { resources } = await cloudinary.search
+      .expression('folder:line_uploads')
+      .sort_by('created_at', 'desc')
+      .max_results(20)
+      .execute();
+    res.json(resources.map(img => ({ url: img.secure_url, time: img.created_at })));
+  } catch (error) { res.status(500).send(error.message); }
 });
 
 async function handleEvent(event) {
@@ -45,10 +55,9 @@ async function handleEvent(event) {
       { folder: 'line_uploads' },
       async (error, result) => {
         if (error) return reject(error);
-        // 【即時回饋】傳送成功通知
         await client.replyMessage(event.replyToken, {
             type: 'text',
-            text: `✅ 照片已上傳成功！\n👉 請至相簿網頁查看`
+            text: `✅ 照片已上傳成功！\n👉 請至網頁查看: https://linephotobot.onrender.com`
         });
         resolve(result);
       }
@@ -56,18 +65,6 @@ async function handleEvent(event) {
     stream.pipe(cloudinaryStream);
   });
 }
-
-// API
-app.get('/api/images', async (req, res) => {
-  try {
-    const { resources } = await cloudinary.search
-      .expression('folder:line_uploads')
-      .sort_by('created_at', 'desc')
-      .max_results(20)
-      .execute();
-    res.json(resources.map(img => ({ url: img.secure_url, time: img.created_at })));
-  } catch (error) { res.status(500).send(error.message); }
-});
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
