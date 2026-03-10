@@ -18,14 +18,12 @@ cloudinary.config({
 
 const client = new line.Client(config);
 
-// 【1. Webhook 路由：不設保護】
 app.post('/callback', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => { console.error(err); res.status(500).end(); });
 });
 
-// 【2. 密碼保護：保護以下所有靜態頁面與 API】
 app.use(basicAuth({
     users: { [process.env.WEB_USER]: process.env.WEB_PASS },
     challenge: true,
@@ -34,7 +32,6 @@ app.use(basicAuth({
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 取得圖片列表
 app.get('/api/images', async (req, res) => {
   try {
     const { resources } = await cloudinary.search
@@ -46,10 +43,10 @@ app.get('/api/images', async (req, res) => {
   } catch (error) { res.status(500).send(error.message); }
 });
 
-// 刪除圖片功能
-app.delete('/api/images/:public_id', async (req, res) => {
+// 【修正重點】使用 query 參數刪除，解決路徑符號衝突
+app.delete('/api/images', async (req, res) => {
     try {
-        await cloudinary.uploader.destroy(req.params.public_id);
+        await cloudinary.uploader.destroy(req.query.id);
         res.json({ success: true });
     } catch (error) { res.status(500).send(error.message); }
 });
@@ -65,7 +62,7 @@ async function handleEvent(event) {
         if (error) return reject(error);
         await client.replyMessage(event.replyToken, {
             type: 'text',
-            text: `✅ 照片已上傳成功！\n👉 請至網頁查看: https://linephotobot.onrender.com`
+            text: `✅ 照片已上傳成功！`
         });
         resolve(result);
       }
