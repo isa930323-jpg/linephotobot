@@ -1,6 +1,7 @@
 {
-  "name": "line-to-web-cloudinary",
+  "name": "line-photo-bot",
   "version": "1.0.0",
+  "description": "LINE Photo Bot with Web Interface",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -8,6 +9,10 @@
   "dependencies": {
     "@line/bot-sdk": "^7.5.2",
     "cloudinary": "^1.37.3",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "express-basic-auth": "^1.2.1"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
