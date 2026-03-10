@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>我的 LINE 圖片牆</title>
+    <style>
+        #gallery { display: flex; flex-wrap: wrap; gap: 10px; }
+        img { border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <h1>最新照片牆</h1>
+    <div id="gallery">讀取中...</div>
+
+    <script>
+        async function loadImages() {
+            try {
+                const res = await fetch('/api/images');
+                const urls = await res.json();
+                const container = document.getElementById('gallery');
+                
+                if (urls.length === 0) {
+                    container.innerHTML = "目前還沒有照片喔！";
+                    return;
+                }
+
+                container.innerHTML = urls.map(url => `<img src="${url}" width="300">`).join('');
+            } catch (err) {
+                console.error("抓取失敗:", err);
+            }
+        }
+
+        // 每一分鐘自動更新一次
+        setInterval(loadImages, 60000);
+        loadImages();
+    </script>
+</body>
+</html>
