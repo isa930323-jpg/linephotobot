@@ -2,8 +2,10 @@ const express = require('express');
 const line = require('@line/bot-sdk');
 const cloudinary = require('cloudinary').v2;
 const path = require('path');
+const basicAuth = require('express-basic-auth'); // 記得 npm install express-basic-auth
 const app = express();
 
+// 設定環境變數
 const config = {
   channelAccessToken: process.env.LINE_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -17,9 +19,17 @@ cloudinary.config({
 
 const client = new line.Client(config);
 
-// 【關鍵修正】使用絕對路徑掛載靜態檔案
+// 【登入防護】後端 Basic Auth
+app.use(basicAuth({
+    users: { [process.env.WEB_USER]: process.env.WEB_PASS },
+    challenge: true,
+    realm: 'MyLineAlbum'
+}));
+
+// 託管靜態網頁
 app.use(express.static(path.join(__dirname, 'public')));
 
+// LINE Webhook
 app.post('/callback', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -33,8 +43,13 @@ async function handleEvent(event) {
   return new Promise((resolve, reject) => {
     const cloudinaryStream = cloudinary.uploader.upload_stream(
       { folder: 'line_uploads' },
-      (error, result) => {
+      async (error, result) => {
         if (error) return reject(error);
+        // 【即時回饋】傳送成功通知
+        await client.replyMessage(event.replyToken, {
+            type: 'text',
+            text: `✅ 照片已上傳成功！\n👉 請至相簿網頁查看`
+        });
         resolve(result);
       }
     );
@@ -42,7 +57,7 @@ async function handleEvent(event) {
   });
 }
 
-// API 提供圖片清單
+// API
 app.get('/api/images', async (req, res) => {
   try {
     const { resources } = await cloudinary.search
@@ -50,12 +65,7 @@ app.get('/api/images', async (req, res) => {
       .sort_by('created_at', 'desc')
       .max_results(20)
       .execute();
-    
-    const data = resources.map(img => ({
-      url: img.secure_url,
-      time: img.created_at
-    }));
-    res.json(data);
+    res.json(resources.map(img => ({ url: img.secure_url, time: img.created_at })));
   } catch (error) { res.status(500).send(error.message); }
 });
 
