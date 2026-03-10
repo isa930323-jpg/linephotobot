@@ -1,0 +1,9 @@
+async function loadImages() {
+  const res = await fetch('/api/images');
+  const urls = await res.json();
+  const container = document.getElementById('gallery');
+  container.innerHTML = urls.map(url => `<img src="${url}" width="300">`).join('');
+}
+// 每一分鐘自動更新一次
+setInterval(loadImages, 60000);
+loadImages();
