@@ -1,3 +1,14 @@
+// 【新增】一個不需要認證的健康檢查路徑
+app.get('/health', (req, res) => {
+    res.status(200).send('I am alive!');
+});
+
+// 【現有的】密碼保護區 (Basic Auth)
+app.use(basicAuth({
+    users: { [process.env.WEB_USER]: process.env.WEB_PASS },
+    challenge: true,
+    realm: 'MyLineAlbum'
+}));
 const express = require('express');
 const line = require('@line/bot-sdk');
 const cloudinary = require('cloudinary').v2;
