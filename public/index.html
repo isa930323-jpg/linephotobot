@@ -2,44 +2,51 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>我的相簿</title>
+    <title>生活相簿 - 免密碼展示版</title>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f9f9f9; }
-        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
-        .card { background: white; border: 1px solid #ddd; padding: 10px; border-radius: 10px; }
-        img { width: 100%; height: auto; border-radius: 5px; }
-        button { margin-top: 10px; background: #ff4d4d; color: white; border: none; padding: 8px; cursor: pointer; }
+        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f7f6; }
+        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
+        .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        img { width: 100%; height: 200px; object-fit: cover; border-radius: 8px; }
+        .time { margin-top: 10px; font-size: 0.85em; color: #666; }
+        .pagination { margin-top: 30px; display: flex; justify-content: center; gap: 15px; }
+        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
     </style>
 </head>
 <body>
-    <h1>生活相簿</h1>
-    <div id="gallery" class="gallery">讀取中...</div>
+    <h1>我的相簿 (展示)</h1>
+    <div id="gallery" class="gallery">載入中...</div>
+    <div class="pagination">
+        <button id="prevBtn" onclick="changePage(-1)" disabled>上一頁</button>
+        <button id="nextBtn" onclick="changePage(1)" disabled>下一頁</button>
+    </div>
 
     <script>
+        let cursors = [null];
+        let currentIndex = 0;
+
         async function loadImages() {
-            const res = await fetch('/api/images');
+            const currentCursor = cursors[currentIndex];
+            const url = `/api/images${currentCursor ? `?cursor=${currentCursor}` : ''}`;
+            const res = await fetch(url);
             const data = await res.json();
-            const container = document.getElementById('gallery');
-            container.innerHTML = data.map(item => `
+            
+            document.getElementById('gallery').innerHTML = data.images.map(item => `
                 <div class="card">
                     <img src="${item.url}">
-                    <div style="font-size:0.8em; color:#888;">${new Date(item.time).toLocaleString()}</div>
-                    <button onclick="deleteImage('${item.public_id}')">刪除照片</button>
+                    <div class="time">${new Date(item.time).toLocaleString()}</div>
                 </div>
             `).join('');
+
+            document.getElementById('prevBtn').disabled = currentIndex === 0;
+            document.getElementById('nextBtn').disabled = !data.nextCursor;
+            if (data.nextCursor && cursors.length <= currentIndex + 1) cursors.push(data.nextCursor);
         }
 
-        async function deleteImage(publicId) {
-            if (!confirm("確定要刪除這張照片嗎？")) return;
-            // 【最終修正】改用 Query String 傳遞，並進行 URL 編碼
-            const res = await fetch(`/api/images?id=${encodeURIComponent(publicId)}`, { 
-                method: 'DELETE' 
-            });
-            if (res.ok) {
-                loadImages();
-            } else {
-                alert("刪除失敗");
-            }
+        function changePage(step) {
+            currentIndex += step;
+            loadImages();
         }
         loadImages();
     </script>
