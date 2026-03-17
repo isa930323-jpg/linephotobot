@@ -2,21 +2,44 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>生活相簿 - 免密碼展示版</title>
+    <title>生活相簿</title>
     <style>
         body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f7f6; }
         .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
-        .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        
+        /* 相片卡片樣式 */
+        .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.2s; }
+        .card:hover { transform: scale(1.02); }
         img { width: 100%; height: 200px; object-fit: cover; border-radius: 8px; }
         .time { margin-top: 10px; font-size: 0.85em; color: #666; }
+        
+        /* 燈箱 (Lightbox) 遮罩樣式 */
+        #lightbox {
+            display: none; position: fixed; z-index: 999; 
+            top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0, 0, 0, 0.9); align-items: center; justify-content: center;
+        }
+        #lightbox img {
+            max-width: 90%; max-height: 90%; object-fit: contain; 
+            border: 3px solid white; box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        #lightbox:target { display: flex; } /* 簡單控制顯示 */
+
         .pagination { margin-top: 30px; display: flex; justify-content: center; gap: 15px; }
         button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
         button:disabled { background: #ccc; cursor: not-allowed; }
     </style>
 </head>
 <body>
-    <h1>我的相簿 (展示)</h1>
+
+    <h1>我的相簿</h1>
+    
+    <div id="lightbox" onclick="this.style.display='none'">
+        <img id="lightbox-img" src="" alt="放大圖">
+    </div>
+
     <div id="gallery" class="gallery">載入中...</div>
+
     <div class="pagination">
         <button id="prevBtn" onclick="changePage(-1)" disabled>上一頁</button>
         <button id="nextBtn" onclick="changePage(1)" disabled>下一頁</button>
@@ -32,8 +55,9 @@
             const res = await fetch(url);
             const data = await res.json();
             
-            document.getElementById('gallery').innerHTML = data.images.map(item => `
-                <div class="card">
+            const container = document.getElementById('gallery');
+            container.innerHTML = data.images.map(item => `
+                <div class="card" onclick="openLightbox('${item.url}')">
                     <img src="${item.url}">
                     <div class="time">${new Date(item.time).toLocaleString()}</div>
                 </div>
@@ -44,10 +68,19 @@
             if (data.nextCursor && cursors.length <= currentIndex + 1) cursors.push(data.nextCursor);
         }
 
+        // 放大照片的函數
+        function openLightbox(url) {
+            const lightbox = document.getElementById('lightbox');
+            const img = document.getElementById('lightbox-img');
+            img.src = url;
+            lightbox.style.display = 'flex';
+        }
+
         function changePage(step) {
             currentIndex += step;
             loadImages();
         }
+
         loadImages();
     </script>
 </body>
