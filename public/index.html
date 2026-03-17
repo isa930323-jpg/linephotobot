@@ -2,40 +2,65 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>生活相簿</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>生活相簿 - 手機優化版</title>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f7f6; }
-        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
+        body { font-family: sans-serif; text-align: center; padding: 10px; background: #f4f7f6; margin: 0; }
+        h1 { font-size: 1.5rem; margin: 20px 0; }
         
-        /* 相片卡片樣式 */
-        .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.2s; }
-        .card:hover { transform: scale(1.02); }
-        img { width: 100%; height: 200px; object-fit: cover; border-radius: 8px; }
-        .time { margin-top: 10px; font-size: 0.85em; color: #666; }
+        /* 網格調整：手機上一列兩張，桌機一列多張 */
+        .gallery { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); 
+            gap: 10px; 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 0 10px;
+        }
         
-        /* 燈箱 (Lightbox) 遮罩樣式 */
+        .card { background: white; padding: 8px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); cursor: pointer; }
+        /* 固定高度並裁切，讓排版整齊 */
+        .card img { width: 100%; height: 150px; object-fit: cover; border-radius: 4px; display: block; }
+        .time { margin-top: 8px; font-size: 0.7rem; color: #888; }
+        
+        /* --- 進階燈箱樣式 --- */
         #lightbox {
-            display: none; position: fixed; z-index: 999; 
+            display: none; position: fixed; z-index: 9999; 
             top: 0; left: 0; width: 100%; height: 100%; 
-            background: rgba(0, 0, 0, 0.9); align-items: center; justify-content: center;
+            background: rgba(0, 0, 0, 0.95);
+            align-items: center; justify-content: center;
+            /* 讓手機滑動不影響底層 */
+            touch-action: none; 
         }
+        
         #lightbox img {
-            max-width: 90%; max-height: 90%; object-fit: contain; 
-            border: 3px solid white; box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            max-width: 95%; max-height: 85%; 
+            object-fit: contain; 
+            box-shadow: 0 0 15px rgba(255,255,255,0.2);
+            border-radius: 4px;
         }
-        #lightbox:target { display: flex; } /* 簡單控制顯示 */
 
-        .pagination { margin-top: 30px; display: flex; justify-content: center; gap: 15px; }
-        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
+        /* 關閉按鈕 */
+        .close-btn {
+            position: absolute; top: 20px; right: 20px;
+            color: white; font-size: 40px; font-weight: bold;
+            cursor: pointer; width: 50px; height: 50px;
+            line-height: 50px; text-align: center;
+            background: rgba(255,255,255,0.1); border-radius: 50%;
+        }
+
+        .pagination { margin: 30px 0; display: flex; justify-content: center; gap: 10px; }
+        button { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 1rem; }
+        button:disabled { background: #ccc; }
     </style>
 </head>
 <body>
 
     <h1>我的相簿</h1>
     
-    <div id="lightbox" onclick="this.style.display='none'">
-        <img id="lightbox-img" src="" alt="放大圖">
+    <div id="lightbox" onclick="closeLightbox()">
+        <span class="close-btn">&times;</span>
+        <img id="lightbox-img" src="" alt="放大圖" onclick="event.stopPropagation()">
     </div>
 
     <div id="gallery" class="gallery">載入中...</div>
@@ -58,22 +83,31 @@
             const container = document.getElementById('gallery');
             container.innerHTML = data.images.map(item => `
                 <div class="card" onclick="openLightbox('${item.url}')">
-                    <img src="${item.url}">
-                    <div class="time">${new Date(item.time).toLocaleString()}</div>
+                    <img src="${item.url}" loading="lazy">
+                    <div class="time">${new Date(item.time).toLocaleDateString()}</div>
                 </div>
             `).join('');
 
             document.getElementById('prevBtn').disabled = currentIndex === 0;
             document.getElementById('nextBtn').disabled = !data.nextCursor;
             if (data.nextCursor && cursors.length <= currentIndex + 1) cursors.push(data.nextCursor);
+            
+            // 回到頂部，方便手機查看新一頁
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        // 放大照片的函數
         function openLightbox(url) {
             const lightbox = document.getElementById('lightbox');
-            const img = document.getElementById('lightbox-img');
-            img.src = url;
+            document.getElementById('lightbox-img').src = url;
             lightbox.style.display = 'flex';
+            // 禁止底層滾動
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').style.display = 'none';
+            // 恢復滾動
+            document.body.style.overflow = 'auto';
         }
 
         function changePage(step) {
