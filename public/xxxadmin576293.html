@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>相簿管理系統</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f9f9f9; }
+        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
+        .card { background: white; border: 1px solid #ddd; padding: 10px; border-radius: 10px; }
+        img { width: 100%; height: auto; border-radius: 5px; }
+        button.del-btn { margin-top: 10px; background: #ff4d4d; color: white; border: none; padding: 8px; cursor: pointer; border-radius: 4px; }
+        .pagination { margin: 30px 0; }
+        .nav-btn { background: #444; color: white; border: none; padding: 8px 16px; cursor: pointer; margin: 0 5px; }
+        .nav-btn:disabled { background: #ccc; }
+    </style>
+</head>
+<body>
+    <h1>生活相簿 (管理員)</h1>
+    <div id="gallery" class="gallery">讀取中...</div>
+
+    <div class="pagination">
+        <button id="prevBtn" class="nav-btn" onclick="changePage(-1)" disabled>上一頁</button>
+        <button id="nextBtn" class="nav-btn" onclick="changePage(1)" disabled>下一頁</button>
+    </div>
+
+    <script>
+        let cursors = [null];
+        let currentIndex = 0;
+
+        async function loadImages() {
+            const currentCursor = cursors[currentIndex];
+            const res = await fetch(`/api/images${currentCursor ? `?cursor=${currentCursor}` : ''}`);
+            const data = await res.json();
+            
+            const container = document.getElementById('gallery');
+            container.innerHTML = data.images.map(item => `
+                <div class="card">
+                    <img src="${item.url}">
+                    <div style="font-size:0.8em; color:#888;">${new Date(item.time).toLocaleString()}</div>
+                    <button class="del-btn" onclick="deleteImage('${item.public_id}')">刪除照片</button>
+                </div>
+            `).join('');
+
+            document.getElementById('prevBtn').disabled = currentIndex === 0;
+            document.getElementById('nextBtn').disabled = !data.nextCursor;
+            if (data.nextCursor && cursors.length <= currentIndex + 1) {
+                cursors.push(data.nextCursor);
+            }
+        }
+
+        async function deleteImage(publicId) {
+            if (!confirm("確定要刪除這張照片嗎？")) return;
+            const res = await fetch(`/api/images?id=${encodeURIComponent(publicId)}`, { method: 'DELETE' });
+            if (res.ok) {
+                loadImages();
+            } else {
+                alert("刪除失敗");
+            }
+        }
+
+        function changePage(step) {
+            currentIndex += step;
+            loadImages();
+        }
+
+        loadImages();
+    </script>
+</body>
+</html>
