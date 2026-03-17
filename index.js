@@ -4,10 +4,9 @@ const cloudinary = require('cloudinary').v2;
 const path = require('path');
 const basicAuth = require('express-basic-auth');
 
-// 1. 先初始化 express
 const app = express();
 
-// 2. 設定環境變數與套件配置
+// 1. 環境變數配置
 const config = {
   channelAccessToken: process.env.LINE_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -21,47 +20,64 @@ cloudinary.config({
 
 const client = new line.Client(config);
 
-// 3. 健康檢查路由 (放在 Basic Auth 之前，確保機器人可以被喚醒)
-app.get('/health', (req, res) => {
-    res.status(200).send('I am alive!');
+// 2. 權限驗證中間件定義
+const authMiddleware = basicAuth({
+    users: { [process.env.WEB_USER]: process.env.WEB_PASS },
+    challenge: true,
+    realm: 'MyLineAlbum'
 });
 
-// 4. LINE Webhook 處理 (必須在 Basic Auth 之前，否則 LINE 傳訊會失敗)
+// 3. 免密碼路由 (LINE Webhook & 健康檢查)
+app.get('/health', (req, res) => res.status(200).send('I am alive!'));
+
 app.post('/callback', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => { console.error(err); res.status(500).end(); });
 });
 
-// 5. 網站資源保護 (Basic Auth)
-app.use(basicAuth({
-    users: { [process.env.WEB_USER]: process.env.WEB_PASS },
-    challenge: true,
-    realm: 'MyLineAlbum'
-}));
-
-// 6. 靜態網頁與 API
+// 4. 靜態檔案路由
+// 首頁 (index.html) 免密碼
 app.use(express.static(path.join(__dirname, 'public')));
 
+// 管理頁 (admin.html) 需要密碼
+app.get('/admin', authMiddleware, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// 5. API 路由
+// [讀取] 免密碼，讓展示頁能顯示
 app.get('/api/images', async (req, res) => {
   try {
-    const { resources } = await cloudinary.search
+    const { cursor } = req.query;
+    const query = cloudinary.search
       .expression('folder:line_uploads')
       .sort_by('created_at', 'desc')
-      .max_results(20)
-      .execute();
-    res.json(resources.map(img => ({ url: img.secure_url, time: img.created_at, public_id: img.public_id })));
+      .max_results(8); // 每頁 8 張
+
+    if (cursor) query.next_cursor(cursor);
+
+    const result = await query.execute();
+    res.json({
+      images: result.resources.map(img => ({ 
+        url: img.secure_url, 
+        time: img.created_at, 
+        public_id: img.public_id 
+      })),
+      nextCursor: result.next_cursor
+    });
   } catch (error) { res.status(500).send(error.message); }
 });
 
-app.delete('/api/images', async (req, res) => {
+// [刪除] 需要密碼
+app.delete('/api/images', authMiddleware, async (req, res) => {
     try {
         await cloudinary.uploader.destroy(req.query.id);
         res.json({ success: true });
     } catch (error) { res.status(500).send(error.message); }
 });
 
-// 7. LINE 事件邏輯
+// 6. LINE 事件邏輯 (保持不變)
 async function handleEvent(event) {
   if (event.type !== 'message' || event.message.type !== 'image') return null;
   const stream = await client.getMessageContent(event.message.id);
@@ -82,6 +98,5 @@ async function handleEvent(event) {
   });
 }
 
-// 8. 啟動伺服器
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
