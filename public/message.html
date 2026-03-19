@@ -13,7 +13,7 @@
       
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: var(--paper);  /* #faf7f2 米白色 */
+            background: #faf7f2;  /* 米白色 */
             padding: 20px;
         }
         
@@ -28,68 +28,87 @@
             margin-bottom: 30px;
             font-size: 2em;
             padding-bottom: 10px;
-            border-bottom: 3px solid #667eea;
+            border-bottom: 3px solid #3d5a38;  /* 綠色 */
         }
         
         .messages-container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;  /* 留言之間的間距 */
         }
         
         .message-item {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(61, 90, 56, 0.15);  /* 綠色陰影 */
             padding: 20px;
-            border-bottom: 1px solid #eee;
-            transition: background-color 0.2s;
+            border-left: 4px solid #3d5a38;  /* 左邊綠色邊框 */
+            transition: transform 0.2s, box-shadow 0.2s;
         }
         
         .message-item:hover {
-            background-color: #f9f9f9;
-        }
-        
-        .message-item:last-child {
-            border-bottom: none;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(61, 90, 56, 0.25);
         }
         
         .message-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px dashed #d4e4c8;  /* 淺綠色虛線 */
         }
         
         .message-user {
             font-weight: 600;
-            color: #667eea;
+            color: #3d5a38;  /* 綠色 */
+            font-size: 1.1em;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .message-user::before {
+            content: '🌿';  /* 蕨類圖示 */
             font-size: 1.1em;
         }
         
         .message-time {
-            color: #999;
+            color: #8a7a6a;  /* 石頭色 */
             font-size: 0.85em;
+            background: #f5f0e8;  /* 奶油色背景 */
+            padding: 4px 8px;
+            border-radius: 20px;
         }
         
         .message-text {
-            color: #333;
+            color: #1a1a14;  /* 深色 */
             line-height: 1.6;
             font-size: 1.1em;
             word-break: break-word;
             white-space: pre-wrap;
+            padding: 4px 0;
         }
         
         .empty-state {
             text-align: center;
             padding: 60px 20px;
-            color: #999;
+            color: #8a7a6a;
             font-size: 1.2em;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
         
         .loading {
             text-align: center;
             padding: 40px;
-            color: #667eea;
+            color: #3d5a38;  /* 綠色 */
             font-size: 1.2em;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
         
         .loading::after {
@@ -97,8 +116,8 @@
             display: inline-block;
             width: 20px;
             height: 20px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
+            border: 3px solid #d4e4c8;  /* 淺綠色 */
+            border-top: 3px solid #3d5a38;  /* 深綠色 */
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin-left: 10px;
@@ -112,8 +131,16 @@
         .message-count {
             text-align: center;
             margin-top: 20px;
-            color: #666;
+            color: #5a7a4a;  /* 蕨綠色 */
             font-size: 0.9em;
+            padding: 8px;
+            background: #f0f5ea;
+            border-radius: 30px;
+            display: inline-block;
+            padding: 8px 24px;
+            margin-left: auto;
+            margin-right: auto;
+            width: fit-content;
         }
         
         .refresh-btn {
@@ -121,7 +148,7 @@
             width: 120px;
             margin: 20px auto;
             padding: 10px 20px;
-            background: #667eea;
+            background: #3d5a38;  /* 綠色 */
             color: white;
             border: none;
             border-radius: 25px;
@@ -131,7 +158,7 @@
         }
         
         .refresh-btn:hover {
-            background: #764ba2;
+            background: #5a7a4a;  /* 較淺綠色 */
         }
         
         .refresh-btn:active {
@@ -141,7 +168,7 @@
         .nav-link {
             display: inline-block;
             margin-bottom: 20px;
-            color: #667eea;
+            color: #3d5a38;  /* 綠色 */
             text-decoration: none;
             font-size: 0.9em;
         }
@@ -149,11 +176,22 @@
         .nav-link:hover {
             text-decoration: underline;
         }
+        
+        /* 留言框架的裝飾 */
+        .message-item::after {
+            content: '';
+            display: block;
+            width: 30px;
+            height: 2px;
+            background: #d4e4c8;
+            margin-top: 12px;
+            margin-left: auto;
+            border-radius: 2px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-
         <div class="messages-container" id="messagesContainer">
             <div class="loading">載入留言中...</div>
         </div>
@@ -173,7 +211,7 @@
                 const messages = await response.json();
                 
                 if (messages.length === 0) {
-                    container.innerHTML = '<div class="empty-state">📭 目前還沒有任何留言</div>';
+                    container.innerHTML = '<div class="empty-state">🌱 目前還沒有任何留言</div>';
                     countSpan.textContent = '共 0 則留言';
                     return;
                 }
@@ -184,7 +222,7 @@
                 container.innerHTML = messages.map(msg => `
                     <div class="message-item">
                         <div class="message-header">
-                            <span class="message-user">${escapeHtml(msg.displayName || '匿名用戶')}</span>
+                            <span class="message-user">FernBrom</span>
                             <span class="message-time">${formatTime(msg.timestamp)}</span>
                         </div>
                         <div class="message-text">${escapeHtml(msg.text)}</div>
