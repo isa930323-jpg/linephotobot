@@ -1,0 +1,92 @@
+   <div class="messages-container" id="messagesContainer">
+            <div class="loading">載入留言中...</div>
+        </div>
+        
+        <div class="message-count" id="messageCount"></div>
+    </div>
+
+    <script>
+        async function loadMessages() {
+            const container = document.getElementById('messagesContainer');
+            const countSpan = document.getElementById('messageCount');
+            
+            container.innerHTML = '<div class="loading">載入留言中...</div>';
+            
+            try {
+                const response = await fetch('/api/messages');
+                const messages = await response.json();
+                
+                if (messages.length === 0) {
+                    container.innerHTML = '<div class="empty-state">📭 目前還沒有任何留言</div>';
+                    countSpan.textContent = '共 0 則留言';
+                    return;
+                }
+                
+                // 依時間排序（新的在前）
+                messages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                
+                container.innerHTML = messages.map(msg => `
+                    <div class="message-item">
+                        <div class="message-header">
+                            <span class="message-user">${escapeHtml(msg.displayName || '匿名用戶')}</span>
+                            <span class="message-time">${formatTime(msg.timestamp)}</span>
+                        </div>
+                        <div class="message-text">${escapeHtml(msg.text)}</div>
+                    </div>
+                `).join('');
+                
+                countSpan.textContent = `共 ${messages.length} 則留言`;
+                
+            } catch (error) {
+                console.error('載入留言失敗:', error);
+                container.innerHTML = '<div class="empty-state" style="color: #ff4757;">❌ 載入留言失敗，請稍後再試</div>';
+                countSpan.textContent = '';
+            }
+        }
+        
+        // 格式化時間
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMins / 60);
+            const diffDays = Math.floor(diffHours / 24);
+            
+            if (diffMins < 1) {
+                return '剛剛';
+            } else if (diffMins < 60) {
+                return `${diffMins} 分鐘前`;
+            } else if (diffHours < 24) {
+                return `${diffHours} 小時前`;
+            } else if (diffDays < 7) {
+                return `${diffDays} 天前`;
+            } else {
+                return date.toLocaleString('zh-TW', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+        }
+        
+        // Escape HTML 特殊字元
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+        
+        // 自動重新整理（每30秒）
+        setInterval(loadMessages, 30000);
+        
+        // 頁面載入時顯示留言
+        document.addEventListener('DOMContentLoaded', loadMessages);
+    </script>
+
