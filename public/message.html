@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINE 留言板</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2em;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+        
+        .messages-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .message-item {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s;
+        }
+        
+        .message-item:hover {
+            background-color: #f9f9f9;
+        }
+        
+        .message-item:last-child {
+            border-bottom: none;
+        }
+        
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .message-user {
+            font-weight: 600;
+            color: #667eea;
+            font-size: 1.1em;
+        }
+        
+        .message-time {
+            color: #999;
+            font-size: 0.85em;
+        }
+        
+        .message-text {
+            color: #333;
+            line-height: 1.6;
+            font-size: 1.1em;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+            font-size: 1.2em;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #667eea;
+            font-size: 1.2em;
+        }
+        
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .message-count {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .refresh-btn {
+            display: block;
+            width: 120px;
+            margin: 20px auto;
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .refresh-btn:hover {
+            background: #764ba2;
+        }
+        
+        .refresh-btn:active {
+            transform: scale(0.98);
+        }
+        
+        .nav-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #667eea;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+        
+        .nav-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="nav-link">← 返回相簿</a>
+        
+        <h1>📝 LINE 留言板</h1>
+        
+        <button class="refresh-btn" onclick="loadMessages()">⟳ 重新整理</button>
+        
+        <div class="messages-container" id="messagesContainer">
+            <div class="loading">載入留言中...</div>
+        </div>
+        
+        <div class="message-count" id="messageCount"></div>
+    </div>
+
+    <script>
+        async function loadMessages() {
+            const container = document.getElementById('messagesContainer');
+            const countSpan = document.getElementById('messageCount');
+            
+            container.innerHTML = '<div class="loading">載入留言中...</div>';
+            
+            try {
+                const response = await fetch('/api/messages');
+                const messages = await response.json();
+                
+                if (messages.length === 0) {
+                    container.innerHTML = '<div class="empty-state">📭 目前還沒有任何留言</div>';
+                    countSpan.textContent = '共 0 則留言';
+                    return;
+                }
+                
+                // 依時間排序（新的在前）
+                messages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                
+                container.innerHTML = messages.map(msg => `
+                    <div class="message-item">
+                        <div class="message-header">
+                            <span class="message-user">${escapeHtml(msg.displayName || '匿名用戶')}</span>
+                            <span class="message-time">${formatTime(msg.timestamp)}</span>
+                        </div>
+                        <div class="message-text">${escapeHtml(msg.text)}</div>
+                    </div>
+                `).join('');
+                
+                countSpan.textContent = `共 ${messages.length} 則留言`;
+                
+            } catch (error) {
+                console.error('載入留言失敗:', error);
+                container.innerHTML = '<div class="empty-state" style="color: #ff4757;">❌ 載入留言失敗，請稍後再試</div>';
+                countSpan.textContent = '';
+            }
+        }
+        
+        // 格式化時間
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMins / 60);
+            const diffDays = Math.floor(diffHours / 24);
+            
+            if (diffMins < 1) {
+                return '剛剛';
+            } else if (diffMins < 60) {
+                return `${diffMins} 分鐘前`;
+            } else if (diffHours < 24) {
+                return `${diffHours} 小時前`;
+            } else if (diffDays < 7) {
+                return `${diffDays} 天前`;
+            } else {
+                return date.toLocaleString('zh-TW', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+        }
+        
+        // Escape HTML 特殊字元
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+        
+        // 自動重新整理（每30秒）
+        setInterval(loadMessages, 30000);
+        
+        // 頁面載入時顯示留言
+        document.addEventListener('DOMContentLoaded', loadMessages);
+    </script>
+</body>
+</html>
