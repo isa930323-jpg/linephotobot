@@ -6,7 +6,42 @@ const basicAuth = require('express-basic-auth');
 const { MongoClient, ObjectId } = require('mongodb');
 
 const app = express();
+const cors = require('cors');
 
+// 自訂 CORS 中間件
+app.use((req, res, next) => {
+  // 允許的來源
+  const allowedOrigins = ['https://fb-d9pw.onrender.com', 'https://localhost:3000'];
+  const origin = req.headers.origin;
+  
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
+  // 允許的請求方法
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  
+  // 允許的請求頭
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // 允許攜帶憑證
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // 處理預檢請求
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  
+  next();
+});
+
+// 或者更簡單的方式，直接用 cors 套件
+app.use(cors({
+  origin: ['https://fb-d9pw.onrender.com'],
+  credentials: true,
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 // 1. 環境變數配置
 const config = {
   channelAccessToken: process.env.LINE_ACCESS_TOKEN,
