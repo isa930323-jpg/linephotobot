@@ -4,44 +4,20 @@ const cloudinary = require('cloudinary').v2;
 const path = require('path');
 const basicAuth = require('express-basic-auth');
 const { MongoClient, ObjectId } = require('mongodb');
-
-const app = express();
 const cors = require('cors');
 
-// 自訂 CORS 中間件
-app.use((req, res, next) => {
-  // 允許的來源
-  const allowedOrigins = ['https://fb-d9pw.onrender.com', 'https://localhost:3000'];
-  const origin = req.headers.origin;
-  
-  if (allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
-  
-  // 允許的請求方法
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  
-  // 允許的請求頭
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  
-  // 允許攜帶憑證
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  // 處理預檢請求
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  
-  next();
-});
+const app = express();
 
-// 或者更簡單的方式，直接用 cors 套件
+// ===== CORS 設定 - 放在所有路由之前 =====
 app.use(cors({
-  origin: ['https://fb-d9pw.onrender.com'],
-  credentials: true,
+  origin: '*', // 允許所有來源（簡單方式）
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+// 處理預檢請求（OPTIONS）
+app.options('*', cors());
+
 // 1. 環境變數配置
 const config = {
   channelAccessToken: process.env.LINE_ACCESS_TOKEN,
@@ -66,7 +42,7 @@ let messagesCollection;
 async function connectMongo() {
   try {
     await mongoClient.connect();
-    db = mongoClient.db('line_bot'); // 資料庫名稱
+    db = mongoClient.db('line_bot');
     messagesCollection = db.collection('messages');
     
     // 建立索引以提升查詢效率
@@ -114,10 +90,8 @@ async function getMessagesFromDB(limit = 100) {
 
 async function deleteMessageFromDB(messageId) {
   try {
-    // 嘗試用 ObjectId 或字串 ID 刪除
     let query = { id: messageId };
     
-    // 如果 ID 看起來像 ObjectId，也嘗試用 _id 查詢
     if (ObjectId.isValid(messageId)) {
       query = { $or: [{ id: messageId }, { _id: new ObjectId(messageId) }] };
     }
@@ -202,7 +176,7 @@ app.get('/api/images', async (req, res) => {
   }
 });
 
-// [讀取] 訊息 - 免密碼
+// [讀取] 訊息 - 免密碼（這個會被 B 專案呼叫）
 app.get('/api/messages', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
@@ -282,7 +256,7 @@ async function handleEvent(event) {
       id: event.message.id,
       text: event.message.text,
       userId: event.source.userId,
-      displayName: '', // 預設值
+      displayName: '',
       timestamp: new Date().toISOString(),
       type: 'text'
     };
@@ -318,7 +292,7 @@ async function handleEvent(event) {
     return null;
   }
   
-  // 處理其他類型的訊息（可選）
+  // 處理其他類型的訊息
   if (event.type === 'message') {
     await client.replyMessage(event.replyToken, {
       type: 'text',
@@ -337,6 +311,7 @@ connectMongo().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📝 留言將儲存在 MongoDB: ${mongoUri}`);
+    console.log(`🌐 CORS 已啟用，允許所有來源訪問`);
   });
 }).catch(error => {
   console.error('無法啟動伺服器:', error);
