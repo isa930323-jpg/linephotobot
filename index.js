@@ -281,7 +281,7 @@ async function handleEvent(event) {
       }
     } catch (error) {
       console.error('取得使用者資料失敗:', error);
-      message.displayName = 'LINE 用戶';
+      message.displayName = 'FernBrom';
     }
     
     // 儲存到 MongoDB
