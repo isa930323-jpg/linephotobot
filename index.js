@@ -8,7 +8,7 @@ const cors = require('cors');
 
 const app = express();
 
-// ===== CORS 設定 =====
+// ===== CORS =====
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -16,7 +16,7 @@ app.use(cors({
 }));
 app.options('*', cors());
 
-// ===== LINE 設定 =====
+// ===== LINE =====
 const config = {
   channelAccessToken: process.env.LINE_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -33,102 +33,79 @@ const client = new line.Client(config);
 // ===== MongoDB =====
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/line_bot';
 const mongoClient = new MongoClient(mongoUri);
-let db;
 let messagesCollection;
 
 async function connectMongo() {
-  try {
-    await mongoClient.connect();
-    db = mongoClient.db('line_bot');
-    messagesCollection = db.collection('messages');
+  await mongoClient.connect();
+  const db = mongoClient.db('line_bot');
+  messagesCollection = db.collection('messages');
 
-    await messagesCollection.createIndex({ timestamp: -1 });
-    await messagesCollection.createIndex({ userId: 1 });
-    await messagesCollection.createIndex({ tags: 1 });
+  await messagesCollection.createIndex({ timestamp: -1 });
+  await messagesCollection.createIndex({ tags: 1 });
 
-    console.log('✅ MongoDB 連接成功');
-  } catch (error) {
-    console.error('❌ MongoDB 連接失敗:', error);
-    process.exit(1);
-  }
+  console.log('✅ MongoDB connected');
 }
 
 // ===== Auth =====
 const authMiddleware = basicAuth({
   users: { [process.env.WEB_USER]: process.env.WEB_PASS },
-  challenge: true,
-  realm: 'MyLineAlbum'
+  challenge: true
 });
 
-// ===== 工具：抓 tag =====
+// ===== 抓 tag =====
 function extractTags(text) {
   const tagRegex = /#[\u4e00-\u9fa5a-zA-Z0-9]+/g;
   const matches = text.match(tagRegex);
   return matches ? [...new Set(matches.map(t => t.replace('#', '')))] : [];
 }
 
-// ===== ✅ 新增：判斷 POST =====
+// ===== 判斷 POST =====
 function isPostFormat(text) {
   return text.trim().startsWith('POST');
 }
 
-// ===== ✅ 新增：解析文章 =====
+// ===== ⭐ 超簡單解析（重點）=====
 function parsePost(text) {
-  const lines = text.split('\n');
+  const lines = text.trim().split('\n');
 
-  let title = '';
-  let content = '';
+  // 移除 POST
+  lines.shift();
 
-  const titleLine = lines.find(l => l.startsWith('標題｜'));
-  if (titleLine) {
-    title = titleLine.replace('標題｜', '').trim();
+  // 第一行當標題
+  let title = lines.shift()?.trim() || '';
+
+  // 找 tag
+  const tagLine = lines.find(l => l.includes('#')) || '';
+
+  // 移除 tag 行
+  const contentLines = lines.filter(l => !l.includes('#'));
+
+  // 如果沒標題 → 自動抓第一段
+  if (!title && contentLines.length > 0) {
+    title = contentLines[0].slice(0, 20);
   }
 
-  const contentStart = lines.findIndex(l => l.startsWith('內文｜'));
-
-  if (contentStart !== -1) {
-    const contentLines = lines.slice(contentStart + 1);
-
-    const cleanLines = contentLines.filter(l => !l.trim().startsWith('#'));
-
-    content = cleanLines
-      .join('\n')
-      .split('\n\n')
-      .map(p => `<p>${p.trim()}</p>`)
-      .join('');
-  }
+  // 轉段落
+  const content = contentLines
+    .join('\n')
+    .split('\n\n')
+    .map(p => `<p>${p.trim()}</p>`)
+    .join('');
 
   return { title, content };
 }
 
-// ===== DB 操作 =====
-async function saveMessageToDB(message) {
+// ===== DB =====
+async function saveMessage(message) {
   return await messagesCollection.insertOne(message);
 }
 
-async function getMessagesFromDB(limit = 100, tag = null) {
-  let query = {};
-  if (tag) query = { tags: tag };
-
-  return await messagesCollection
-    .find(query)
+async function getMessages(limit = 100, tag = null) {
+  const query = tag ? { tags: tag } : {};
+  return await messagesCollection.find(query)
     .sort({ timestamp: -1 })
     .limit(limit)
     .toArray();
-}
-
-async function deleteMessageFromDB(messageId) {
-  let query = { id: messageId };
-  if (ObjectId.isValid(messageId)) {
-    query = { $or: [{ id: messageId }, { _id: new ObjectId(messageId) }] };
-  }
-  const result = await messagesCollection.deleteOne(query);
-  return result.deletedCount > 0;
-}
-
-async function clearAllMessagesFromDB() {
-  const result = await messagesCollection.deleteMany({});
-  return result.deletedCount;
 }
 
 // ===== Routes =====
@@ -136,28 +113,21 @@ app.get('/health', (req, res) => res.send('OK'));
 
 app.post('/callback', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
-    .then(result => res.json(result))
-    .catch(err => {
-      console.error(err);
-      res.status(500).end();
-    });
+    .then(r => res.json(r))
+    .catch(e => res.status(500).end());
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
-app.get('/messages', (req, res) => res.sendFile(path.join(__dirname, 'public/messages.html')));
-app.get('/admin', authMiddleware, (req, res) => res.sendFile(path.join(__dirname, 'public/admin.html')));
-
-// ===== API =====
 app.get('/api/messages', async (req, res) => {
-  const limit = parseInt(req.query.limit) || 100;
-  const tag = req.query.tag;
-  const messages = await getMessagesFromDB(limit, tag);
-  res.json(messages);
+  const data = await getMessages(
+    parseInt(req.query.limit) || 100,
+    req.query.tag
+  );
+  res.json(data);
 });
 
-// ===== LINE 處理 =====
+// ===== LINE =====
 async function handleEvent(event) {
 
   // ===== 圖片 =====
@@ -165,24 +135,24 @@ async function handleEvent(event) {
     const stream = await client.getMessageContent(event.message.id);
 
     return new Promise((resolve, reject) => {
-      const cloudinaryStream = cloudinary.uploader.upload_stream(
+      const upload = cloudinary.uploader.upload_stream(
         { folder: 'line_uploads' },
-        async (error, result) => {
-          if (error) return reject(error);
+        async (err) => {
+          if (err) return reject(err);
 
           await client.replyMessage(event.replyToken, {
             type: 'text',
             text: '✅ 照片已上傳'
           });
 
-          resolve(result);
+          resolve();
         }
       );
-      stream.pipe(cloudinaryStream);
+      stream.pipe(upload);
     });
   }
 
-  // ===== 文字（升級版） =====
+  // ===== 文字 =====
   if (event.type === 'message' && event.message.type === 'text') {
 
     const text = event.message.text;
@@ -190,7 +160,7 @@ async function handleEvent(event) {
 
     let message;
 
-    // 👉 POST文章
+    // ⭐ POST 發文
     if (isPostFormat(text)) {
       const { title, content } = parsePost(text);
 
@@ -200,37 +170,24 @@ async function handleEvent(event) {
         title,
         content,
         raw: text,
-        userId: event.source.userId,
-        displayName: '',
         timestamp: new Date().toISOString(),
         tags
       };
 
     } else {
-      // 👉 原本訊息
+      // 一般訊息
       message = {
         id: event.message.id,
         type: 'text',
         text,
-        userId: event.source.userId,
-        displayName: '',
         timestamp: new Date().toISOString(),
         tags
       };
     }
 
-    // 抓使用者名稱
-    try {
-      const profile = await client.getProfile(event.source.userId);
-      message.displayName = profile.displayName;
-    } catch {
-      message.displayName = 'FernBrom';
-    }
+    await saveMessage(message);
 
-    // 存DB
-    await saveMessageToDB(message);
-
-    // 回覆
+    // 回覆（簡化）
     let reply = '✅ 已記錄';
 
     if (message.type === 'post') {
@@ -238,7 +195,7 @@ async function handleEvent(event) {
     }
 
     if (tags.length > 0) {
-      reply += `\n🏷️ ${tags.join('、')}`;
+      reply += `\n#${tags.join(' #')}`;
     }
 
     await client.replyMessage(event.replyToken, {
@@ -257,7 +214,7 @@ const PORT = process.env.PORT || 10000;
 
 connectMongo().then(() => {
   app.listen(PORT, () => {
-    console.log(`🚀 Server running on ${PORT}`);
+    console.log('🚀 Server running on', PORT);
   });
 });
 
