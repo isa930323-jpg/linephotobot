@@ -8,7 +8,7 @@ const cors = require('cors');
 
 const app = express();
 
-// ===== CORS 設定 - 放在所有路由之前 =====
+// ===== CORS 設定 =====
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -16,7 +16,7 @@ app.use(cors({
 }));
 app.options('*', cors());
 
-// 1. 環境變數配置
+// ===== LINE 設定 =====
 const config = {
   channelAccessToken: process.env.LINE_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -30,24 +30,22 @@ cloudinary.config({
 
 const client = new line.Client(config);
 
-// 2. MongoDB 連接設定
+// ===== MongoDB =====
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/line_bot';
 const mongoClient = new MongoClient(mongoUri);
 let db;
 let messagesCollection;
 
-// 連接 MongoDB
 async function connectMongo() {
   try {
     await mongoClient.connect();
     db = mongoClient.db('line_bot');
     messagesCollection = db.collection('messages');
-    
-    // 建立索引以提升查詢效率
+
     await messagesCollection.createIndex({ timestamp: -1 });
     await messagesCollection.createIndex({ userId: 1 });
-    await messagesCollection.createIndex({ tags: 1 }); // 新增標籤索引
-    
+    await messagesCollection.createIndex({ tags: 1 });
+
     console.log('✅ MongoDB 連接成功');
   } catch (error) {
     console.error('❌ MongoDB 連接失敗:', error);
@@ -55,290 +53,216 @@ async function connectMongo() {
   }
 }
 
-// 3. 權限驗證中間件定義
+// ===== Auth =====
 const authMiddleware = basicAuth({
-    users: { [process.env.WEB_USER]: process.env.WEB_PASS },
-    challenge: true,
-    realm: 'MyLineAlbum'
+  users: { [process.env.WEB_USER]: process.env.WEB_PASS },
+  challenge: true,
+  realm: 'MyLineAlbum'
 });
 
-// 4. 輔助函數：從文字中提取 #標籤
+// ===== 工具：抓 tag =====
 function extractTags(text) {
   const tagRegex = /#[\u4e00-\u9fa5a-zA-Z0-9]+/g;
   const matches = text.match(tagRegex);
-  return matches ? [...new Set(matches)] : [];
+  return matches ? [...new Set(matches.map(t => t.replace('#', '')))] : [];
 }
 
-// 5. 訊息操作函數
-async function saveMessageToDB(message) {
-  try {
-    const result = await messagesCollection.insertOne(message);
-    return result;
-  } catch (error) {
-    console.error('儲存訊息失敗:', error);
-    throw error;
+// ===== ✅ 新增：判斷 POST =====
+function isPostFormat(text) {
+  return text.trim().startsWith('POST');
+}
+
+// ===== ✅ 新增：解析文章 =====
+function parsePost(text) {
+  const lines = text.split('\n');
+
+  let title = '';
+  let content = '';
+
+  const titleLine = lines.find(l => l.startsWith('標題｜'));
+  if (titleLine) {
+    title = titleLine.replace('標題｜', '').trim();
   }
+
+  const contentStart = lines.findIndex(l => l.startsWith('內文｜'));
+
+  if (contentStart !== -1) {
+    const contentLines = lines.slice(contentStart + 1);
+
+    const cleanLines = contentLines.filter(l => !l.trim().startsWith('#'));
+
+    content = cleanLines
+      .join('\n')
+      .split('\n\n')
+      .map(p => `<p>${p.trim()}</p>`)
+      .join('');
+  }
+
+  return { title, content };
+}
+
+// ===== DB 操作 =====
+async function saveMessageToDB(message) {
+  return await messagesCollection.insertOne(message);
 }
 
 async function getMessagesFromDB(limit = 100, tag = null) {
-  try {
-    let query = {};
-    if (tag) {
-      query = { tags: tag };
-    }
-    
-    const messages = await messagesCollection
-      .find(query)
-      .sort({ timestamp: -1 })
-      .limit(limit)
-      .toArray();
-    return messages;
-  } catch (error) {
-    console.error('讀取訊息失敗:', error);
-    return [];
-  }
+  let query = {};
+  if (tag) query = { tags: tag };
+
+  return await messagesCollection
+    .find(query)
+    .sort({ timestamp: -1 })
+    .limit(limit)
+    .toArray();
 }
 
 async function deleteMessageFromDB(messageId) {
-  try {
-    let query = { id: messageId };
-    
-    if (ObjectId.isValid(messageId)) {
-      query = { $or: [{ id: messageId }, { _id: new ObjectId(messageId) }] };
-    }
-    
-    const result = await messagesCollection.deleteOne(query);
-    return result.deletedCount > 0;
-  } catch (error) {
-    console.error('刪除訊息失敗:', error);
-    return false;
+  let query = { id: messageId };
+  if (ObjectId.isValid(messageId)) {
+    query = { $or: [{ id: messageId }, { _id: new ObjectId(messageId) }] };
   }
+  const result = await messagesCollection.deleteOne(query);
+  return result.deletedCount > 0;
 }
 
 async function clearAllMessagesFromDB() {
-  try {
-    const result = await messagesCollection.deleteMany({});
-    return result.deletedCount;
-  } catch (error) {
-    console.error('清除所有訊息失敗:', error);
-    throw error;
-  }
+  const result = await messagesCollection.deleteMany({});
+  return result.deletedCount;
 }
 
-// 6. 免密碼路由
-app.get('/health', (req, res) => res.status(200).send('I am alive!'));
+// ===== Routes =====
+app.get('/health', (req, res) => res.send('OK'));
 
 app.post('/callback', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
-    .then((result) => res.json(result))
-    .catch((err) => { 
-      console.error(err); 
-      res.status(500).end(); 
+    .then(result => res.json(result))
+    .catch(err => {
+      console.error(err);
+      res.status(500).end();
     });
 });
 
-// 7. 靜態檔案路由
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 相簿首頁
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public/index.html')));
+app.get('/messages', (req, res) => res.sendFile(path.join(__dirname, 'public/messages.html')));
+app.get('/admin', authMiddleware, (req, res) => res.sendFile(path.join(__dirname, 'public/admin.html')));
 
-// 簡單留言板頁面
-app.get('/messages', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'messages.html'));
-});
-
-// 管理頁需要密碼
-app.get('/admin', authMiddleware, (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
-
-// 8. API 路由
-// [讀取] 照片 - 免密碼
-app.get('/api/images', async (req, res) => {
-  try {
-    const { cursor } = req.query;
-    const query = cloudinary.search
-      .expression('folder:line_uploads')
-      .sort_by('created_at', 'desc')
-      .max_results(8);
-
-    if (cursor) query.next_cursor(cursor);
-
-    const result = await query.execute();
-    res.json({
-      images: result.resources.map(img => ({ 
-        url: img.secure_url, 
-        time: img.created_at, 
-        public_id: img.public_id 
-      })),
-      nextCursor: result.next_cursor
-    });
-  } catch (error) { 
-    console.error('讀取照片失敗:', error);
-    res.status(500).send(error.message); 
-  }
-});
-
-// [讀取] 訊息 - 支援按標籤篩選
+// ===== API =====
 app.get('/api/messages', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 100;
-    const tag = req.query.tag; // 取得標籤參數
-    
-    const messages = await getMessagesFromDB(limit, tag);
-    res.json(messages);
-  } catch (error) {
-    console.error('讀取訊息失敗:', error);
-    res.status(500).send(error.message);
-  }
+  const limit = parseInt(req.query.limit) || 100;
+  const tag = req.query.tag;
+  const messages = await getMessagesFromDB(limit, tag);
+  res.json(messages);
 });
 
-// [刪除] 照片 - 需要密碼
-app.delete('/api/images', authMiddleware, async (req, res) => {
-    try {
-        await cloudinary.uploader.destroy(req.query.id);
-        res.json({ success: true });
-    } catch (error) { 
-        console.error('刪除照片失敗:', error);
-        res.status(500).send(error.message); 
-    }
-});
-
-// [刪除] 訊息 - 需要密碼
-app.delete('/api/messages/:id', authMiddleware, async (req, res) => {
-    try {
-        const success = await deleteMessageFromDB(req.params.id);
-        if (success) {
-            res.json({ success: true });
-        } else {
-            res.status(404).json({ success: false, message: '訊息不存在' });
-        }
-    } catch (error) { 
-        console.error('刪除訊息失敗:', error);
-        res.status(500).send(error.message); 
-    }
-});
-
-// [刪除] 所有訊息 - 需要密碼
-app.delete('/api/messages', authMiddleware, async (req, res) => {
-    try {
-        const deletedCount = await clearAllMessagesFromDB();
-        res.json({ success: true, deletedCount });
-    } catch (error) { 
-        console.error('清除所有訊息失敗:', error);
-        res.status(500).send(error.message); 
-    }
-});
-
-// 9. LINE 事件處理
+// ===== LINE 處理 =====
 async function handleEvent(event) {
-  // 處理圖片訊息
+
+  // ===== 圖片 =====
   if (event.type === 'message' && event.message.type === 'image') {
     const stream = await client.getMessageContent(event.message.id);
-    
+
     return new Promise((resolve, reject) => {
       const cloudinaryStream = cloudinary.uploader.upload_stream(
         { folder: 'line_uploads' },
         async (error, result) => {
-          if (error) {
-            console.error('上傳圖片失敗:', error);
-            return reject(error);
-          }
+          if (error) return reject(error);
+
           await client.replyMessage(event.replyToken, {
-              type: 'text',
-              text: '✅ 照片已上傳成功！'
+            type: 'text',
+            text: '✅ 照片已上傳'
           });
+
           resolve(result);
         }
       );
       stream.pipe(cloudinaryStream);
     });
   }
-  
-  // 處理文字訊息
+
+  // ===== 文字（升級版） =====
   if (event.type === 'message' && event.message.type === 'text') {
-    // 提取標籤
-    const tags = extractTags(event.message.text);
-    
-    const message = {
-      id: event.message.id,
-      text: event.message.text,
-      userId: event.source.userId,
-      displayName: '',
-      timestamp: new Date().toISOString(),
-      type: 'text',
-      tags: tags  // 新增標籤陣列欄位
-    };
-    
-    // 嘗試取得使用者名稱
+
+    const text = event.message.text;
+    const tags = extractTags(text);
+
+    let message;
+
+    // 👉 POST文章
+    if (isPostFormat(text)) {
+      const { title, content } = parsePost(text);
+
+      message = {
+        id: event.message.id,
+        type: 'post',
+        title,
+        content,
+        raw: text,
+        userId: event.source.userId,
+        displayName: '',
+        timestamp: new Date().toISOString(),
+        tags
+      };
+
+    } else {
+      // 👉 原本訊息
+      message = {
+        id: event.message.id,
+        type: 'text',
+        text,
+        userId: event.source.userId,
+        displayName: '',
+        timestamp: new Date().toISOString(),
+        tags
+      };
+    }
+
+    // 抓使用者名稱
     try {
-      if (event.source.userId) {
-        const profile = await client.getProfile(event.source.userId);
-        message.displayName = profile.displayName;
-      }
-    } catch (error) {
-      console.error('取得使用者資料失敗:', error);
+      const profile = await client.getProfile(event.source.userId);
+      message.displayName = profile.displayName;
+    } catch {
       message.displayName = 'FernBrom';
     }
-    
-    // 儲存到 MongoDB
-    try {
-      await saveMessageToDB(message);
-      
-      // 回覆確認訊息（顯示提取到的標籤）
-      let replyText = `📝 訊息已記錄！`;
-      if (tags.length > 0) {
-        replyText += `\n🏷️ 標籤：${tags.join('、')}`;
-      }
-      
-      await client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: replyText
-      });
-    } catch (error) {
-      console.error('儲存訊息失敗:', error);
-      await client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '抱歉，訊息儲存失敗，請稍後再試。'
-      });
+
+    // 存DB
+    await saveMessageToDB(message);
+
+    // 回覆
+    let reply = '✅ 已記錄';
+
+    if (message.type === 'post') {
+      reply = `📝 已發布\n${message.title}`;
     }
-    
-    return null;
-  }
-  
-  // 處理其他類型的訊息
-  if (event.type === 'message') {
+
+    if (tags.length > 0) {
+      reply += `\n🏷️ ${tags.join('、')}`;
+    }
+
     await client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '目前只支援圖片和文字訊息喔！'
+      text: reply
     });
+
+    return null;
   }
-  
+
   return null;
 }
 
-// 10. 啟動伺服器
+// ===== 啟動 =====
 const PORT = process.env.PORT || 10000;
 
-// 先連接資料庫，再啟動伺服器
 connectMongo().then(() => {
   app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📝 留言將儲存在 MongoDB: ${mongoUri}`);
-    console.log(`🌐 CORS 已啟用，允許所有來源訪問`);
-    console.log(`🏷️ 標籤提取功能已啟用`);
+    console.log(`🚀 Server running on ${PORT}`);
   });
-}).catch(error => {
-  console.error('無法啟動伺服器:', error);
-  process.exit(1);
 });
 
-// 優雅關閉
+// ===== 關閉 =====
 process.on('SIGINT', async () => {
-  console.log('正在關閉伺服器...');
   await mongoClient.close();
   process.exit(0);
 });
