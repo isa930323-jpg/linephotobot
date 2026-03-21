@@ -10,12 +10,10 @@ const app = express();
 
 // ===== CORS 設定 - 放在所有路由之前 =====
 app.use(cors({
-  origin: '*', // 允許所有來源（簡單方式）
+  origin: '*',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
-// 處理預檢請求（OPTIONS）
 app.options('*', cors());
 
 // 1. 環境變數配置
@@ -48,6 +46,7 @@ async function connectMongo() {
     // 建立索引以提升查詢效率
     await messagesCollection.createIndex({ timestamp: -1 });
     await messagesCollection.createIndex({ userId: 1 });
+    await messagesCollection.createIndex({ tags: 1 }); // 新增標籤索引
     
     console.log('✅ MongoDB 連接成功');
   } catch (error) {
@@ -63,7 +62,14 @@ const authMiddleware = basicAuth({
     realm: 'MyLineAlbum'
 });
 
-// 4. 訊息操作函數
+// 4. 輔助函數：從文字中提取 #標籤
+function extractTags(text) {
+  const tagRegex = /#[\u4e00-\u9fa5a-zA-Z0-9]+/g;
+  const matches = text.match(tagRegex);
+  return matches ? [...new Set(matches)] : [];
+}
+
+// 5. 訊息操作函數
 async function saveMessageToDB(message) {
   try {
     const result = await messagesCollection.insertOne(message);
@@ -74,10 +80,15 @@ async function saveMessageToDB(message) {
   }
 }
 
-async function getMessagesFromDB(limit = 100) {
+async function getMessagesFromDB(limit = 100, tag = null) {
   try {
+    let query = {};
+    if (tag) {
+      query = { tags: tag };
+    }
+    
     const messages = await messagesCollection
-      .find({})
+      .find(query)
       .sort({ timestamp: -1 })
       .limit(limit)
       .toArray();
@@ -114,7 +125,7 @@ async function clearAllMessagesFromDB() {
   }
 }
 
-// 5. 免密碼路由
+// 6. 免密碼路由
 app.get('/health', (req, res) => res.status(200).send('I am alive!'));
 
 app.post('/callback', line.middleware(config), (req, res) => {
@@ -126,7 +137,7 @@ app.post('/callback', line.middleware(config), (req, res) => {
     });
 });
 
-// 6. 靜態檔案路由
+// 7. 靜態檔案路由
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 相簿首頁
@@ -139,17 +150,12 @@ app.get('/messages', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'messages.html'));
 });
 
-// 原來的留言板頁面（如果需要）
-app.get('/note', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'note.html'));
-});
-
 // 管理頁需要密碼
 app.get('/admin', authMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// 7. API 路由
+// 8. API 路由
 // [讀取] 照片 - 免密碼
 app.get('/api/images', async (req, res) => {
   try {
@@ -176,11 +182,13 @@ app.get('/api/images', async (req, res) => {
   }
 });
 
-// [讀取] 訊息 - 免密碼（這個會被 B 專案呼叫）
+// [讀取] 訊息 - 支援按標籤篩選
 app.get('/api/messages', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
-    const messages = await getMessagesFromDB(limit);
+    const tag = req.query.tag; // 取得標籤參數
+    
+    const messages = await getMessagesFromDB(limit, tag);
     res.json(messages);
   } catch (error) {
     console.error('讀取訊息失敗:', error);
@@ -225,7 +233,7 @@ app.delete('/api/messages', authMiddleware, async (req, res) => {
     }
 });
 
-// 8. LINE 事件處理
+// 9. LINE 事件處理
 async function handleEvent(event) {
   // 處理圖片訊息
   if (event.type === 'message' && event.message.type === 'image') {
@@ -252,13 +260,17 @@ async function handleEvent(event) {
   
   // 處理文字訊息
   if (event.type === 'message' && event.message.type === 'text') {
+    // 提取標籤
+    const tags = extractTags(event.message.text);
+    
     const message = {
       id: event.message.id,
       text: event.message.text,
       userId: event.source.userId,
       displayName: '',
       timestamp: new Date().toISOString(),
-      type: 'text'
+      type: 'text',
+      tags: tags  // 新增標籤陣列欄位
     };
     
     // 嘗試取得使用者名稱
@@ -276,10 +288,15 @@ async function handleEvent(event) {
     try {
       await saveMessageToDB(message);
       
-      // 回覆確認訊息
+      // 回覆確認訊息（顯示提取到的標籤）
+      let replyText = `📝 訊息已記錄！`;
+      if (tags.length > 0) {
+        replyText += `\n🏷️ 標籤：${tags.join('、')}`;
+      }
+      
       await client.replyMessage(event.replyToken, {
         type: 'text',
-        text: `📝 訊息已記錄：\n"${event.message.text.substring(0, 50)}${event.message.text.length > 50 ? '...' : ''}"`
+        text: replyText
       });
     } catch (error) {
       console.error('儲存訊息失敗:', error);
@@ -303,7 +320,7 @@ async function handleEvent(event) {
   return null;
 }
 
-// 9. 啟動伺服器
+// 10. 啟動伺服器
 const PORT = process.env.PORT || 10000;
 
 // 先連接資料庫，再啟動伺服器
@@ -312,6 +329,7 @@ connectMongo().then(() => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📝 留言將儲存在 MongoDB: ${mongoUri}`);
     console.log(`🌐 CORS 已啟用，允許所有來源訪問`);
+    console.log(`🏷️ 標籤提取功能已啟用`);
   });
 }).catch(error => {
   console.error('無法啟動伺服器:', error);
