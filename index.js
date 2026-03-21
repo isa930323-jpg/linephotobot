@@ -46,7 +46,7 @@ async function connectMongo() {
     // 建立索引以提升查詢效率
     await messagesCollection.createIndex({ timestamp: -1 });
     await messagesCollection.createIndex({ userId: 1 });
-    await messagesCollection.createIndex({ tags: 1 }); // 新增標籤索引
+    await messagesCollection.createIndex({ tags: 1 });
     
     console.log('✅ MongoDB 連接成功');
   } catch (error) {
@@ -62,11 +62,18 @@ const authMiddleware = basicAuth({
     realm: 'MyLineAlbum'
 });
 
-// 4. 輔助函數：從文字中提取 #標籤
-function extractTags(text) {
+// 4. 允許的標籤列表（只保留這些標籤）
+const ALLOWED_TAGS = ['#碳盤查', '#永續', '#淨零', '#生活', '#鹿角蕨', '#積水鳳梨', '#植物'];
+
+// 輔助函數：從文字中提取並過濾標籤
+function extractAndFilterTags(text) {
   const tagRegex = /#[\u4e00-\u9fa5a-zA-Z0-9]+/g;
   const matches = text.match(tagRegex);
-  return matches ? [...new Set(matches)] : [];
+  if (!matches) return [];
+  
+  // 過濾出允許的標籤，並去重
+  const filteredTags = matches.filter(tag => ALLOWED_TAGS.includes(tag));
+  return [...new Set(filteredTags)];
 }
 
 // 5. 訊息操作函數
@@ -186,7 +193,7 @@ app.get('/api/images', async (req, res) => {
 app.get('/api/messages', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
-    const tag = req.query.tag; // 取得標籤參數
+    const tag = req.query.tag;
     
     const messages = await getMessagesFromDB(limit, tag);
     res.json(messages);
@@ -260,38 +267,30 @@ async function handleEvent(event) {
   
   // 處理文字訊息
   if (event.type === 'message' && event.message.type === 'text') {
-    // 提取標籤
-    const tags = extractTags(event.message.text);
+    // 提取並過濾標籤（只保留允許的標籤）
+    const tags = extractAndFilterTags(event.message.text);
     
+    // 統一把顯示名稱設為 FernBrom
     const message = {
       id: event.message.id,
       text: event.message.text,
       userId: event.source.userId,
-      displayName: '',
+      displayName: 'FernBrom',  // 固定顯示名稱
       timestamp: new Date().toISOString(),
       type: 'text',
-      tags: tags  // 新增標籤陣列欄位
+      tags: tags
     };
-    
-    // 嘗試取得使用者名稱
-    try {
-      if (event.source.userId) {
-        const profile = await client.getProfile(event.source.userId);
-        message.displayName = profile.displayName;
-      }
-    } catch (error) {
-      console.error('取得使用者資料失敗:', error);
-      message.displayName = 'LINE 用戶';
-    }
     
     // 儲存到 MongoDB
     try {
       await saveMessageToDB(message);
       
-      // 回覆確認訊息（顯示提取到的標籤）
-      let replyText = `📝 訊息已記錄！`;
+      // 回覆確認訊息（顯示過濾後的標籤）
+      let replyText = `📝 訊息已記錄！\n👤 作者：FernBrom`;
       if (tags.length > 0) {
         replyText += `\n🏷️ 標籤：${tags.join('、')}`;
+      } else {
+        replyText += `\n🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）`;
       }
       
       await client.replyMessage(event.replyToken, {
@@ -329,7 +328,8 @@ connectMongo().then(() => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📝 留言將儲存在 MongoDB: ${mongoUri}`);
     console.log(`🌐 CORS 已啟用，允許所有來源訪問`);
-    console.log(`🏷️ 標籤提取功能已啟用`);
+    console.log(`🏷️ 允許的標籤：${ALLOWED_TAGS.join(', ')}`);
+    console.log(`👤 PO 文者顯示名稱統一為：FernBrom`);
   });
 }).catch(error => {
   console.error('無法啟動伺服器:', error);
