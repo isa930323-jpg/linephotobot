@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理後台 - 蕨積留言板</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    h1 {
+      text-align: center;
+      color: #3d5a38;
+      margin-bottom: 30px;
+    }
+    .admin-toolbar {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .btn-danger {
+      background: #dc2626;
+      color: white;
+    }
+    .btn-danger:hover {
+      background: #b91c1c;
+    }
+    .btn-primary {
+      background: #5a7a4a;
+      color: white;
+    }
+    .btn-primary:hover {
+      background: #3d5a38;
+    }
+    .messages-container {
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .message-item {
+      padding: 20px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .message-item:last-child {
+      border-bottom: none;
+    }
+    .message-content {
+      flex: 1;
+    }
+    .message-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 0.85rem;
+      color: #666;
+    }
+    .message-user {
+      font-weight: bold;
+      color: #5a7a4a;
+    }
+    .message-text {
+      color: #333;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    .message-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .tag {
+      background: #e8f0e5;
+      color: #5a7a4a;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 0.7rem;
+    }
+    .delete-btn {
+      background: #dc2626;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .delete-btn:hover {
+      background: #b91c1c;
+    }
+    .empty-state, .loading, .error-state {
+      text-align: center;
+      padding: 60px;
+      color: #999;
+    }
+    .loading::after {
+      content: '';
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #ddd;
+      border-top-color: #5a7a4a;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-left: 8px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .confirm-dialog {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 24px;
+      border-radius: 16px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+      z-index: 1000;
+      display: none;
+      min-width: 300px;
+      text-align: center;
+    }
+    .confirm-dialog.active {
+      display: block;
+    }
+    .confirm-dialog h3 {
+      margin-bottom: 20px;
+      color: #333;
+    }
+    .confirm-dialog .btn-group {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+    .overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 999;
+      display: none;
+    }
+    .overlay.active {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚙️ 留言管理後台</h1>
+    
+    <div class="admin-toolbar">
+      <button class="btn btn-danger" onclick="clearAllMessages()">🗑️ 清除所有留言</button>
+      <button class="btn btn-primary" onclick="refreshMessages()">🔄 重新整理</button>
+    </div>
+    
+    <div class="messages-container" id="messagesContainer">
+      <div class="loading">載入留言中</div>
+    </div>
+  </div>
+  
+  <div class="overlay" id="overlay"></div>
+  <div class="confirm-dialog" id="confirmDialog">
+    <h3 id="confirmMessage">確定要執行此操作嗎？</h3>
+    <div class="btn-group">
+      <button class="btn btn-danger" id="confirmBtn">確定</button>
+      <button class="btn btn-primary" onclick="hideConfirm()">取消</button>
+    </div>
+  </div>
+
+  <script>
+    // API 網址 - 改成你的 A 專案完整網址
+    const API_BASE = 'https://linephotobot.onrender.com';
+    
+    let currentAction = null;
+    
+    // 載入留言
+    async function loadMessages() {
+      const container = document.getElementById('messagesContainer');
+      container.innerHTML = '<div class="loading">載入留言中</div>';
+      
+      try {
+        const response = await fetch(`${API_BASE}/api/messages`);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const messages = await response.json();
+        
+        if (messages.length === 0) {
+          container.innerHTML = '<div class="empty-state">📭 目前還沒有任何留言</div>';
+          return;
+        }
+        
+        container.innerHTML = messages.map(msg => `
+          <div class="message-item" data-id="${msg.id}">
+            <div class="message-content">
+              <div class="message-header">
+                <span class="message-user">${escapeHtml(msg.displayName || '匿名用戶')}</span>
+                <span>${new Date(msg.timestamp).toLocaleString('zh-TW')}</span>
+              </div>
+              <div class="message-text">${escapeHtml(msg.text)}</div>
+              ${msg.tags && msg.tags.length > 0 ? `
+                <div class="message-tags">
+                  ${msg.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
+                </div>
+              ` : ''}
+            </div>
+            <button class="delete-btn" onclick="deleteMessage('${msg.id}')">刪除</button>
+          </div>
+        `).join('');
+        
+      } catch (error) {
+        console.error('載入留言失敗:', error);
+        container.innerHTML = `
+          <div class="error-state">
+            ❌ 載入失敗<br>
+            <small style="color:#999;">${error.message}</small><br>
+            <button class="btn btn-primary" style="margin-top:16px;" onclick="refreshMessages()">重新整理</button>
+          </div>
+        `;
+      }
+    }
+    
+    // 刪除單一留言
+    async function deleteMessage(messageId) {
+      showConfirm('確定要刪除這則留言嗎？', async () => {
+        try {
+          const response = await fetch(`${API_BASE}/api/messages/${messageId}`, {
+            method: 'DELETE'
+          });
+          
+          if (response.ok) {
+            await loadMessages();
+          } else {
+            alert('刪除失敗');
+          }
+        } catch (error) {
+          console.error('刪除失敗:', error);
+          alert('刪除失敗');
+        }
+      });
+    }
+    
+    // 清除所有留言
+    async function clearAllMessages() {
+      showConfirm('⚠️ 確定要清除所有留言嗎？此操作無法復原！', async () => {
+        try {
+          const response = await fetch(`${API_BASE}/api/messages`, {
+            method: 'DELETE'
+          });
+          
+          if (response.ok) {
+            await loadMessages();
+          } else {
+            alert('清除失敗');
+          }
+        } catch (error) {
+          console.error('清除失敗:', error);
+          alert('清除失敗');
+        }
+      });
+    }
+    
+    // 重新整理
+    function refreshMessages() {
+      loadMessages();
+    }
+    
+    // 確認對話框
+    function showConfirm(message, onConfirm) {
+      document.getElementById('confirmMessage').textContent = message;
+      document.getElementById('confirmDialog').classList.add('active');
+      document.getElementById('overlay').classList.add('active');
+      currentAction = onConfirm;
+    }
+    
+    function hideConfirm() {
+      document.getElementById('confirmDialog').classList.remove('active');
+      document.getElementById('overlay').classList.remove('active');
+      currentAction = null;
+    }
+    
+    document.getElementById('confirmBtn').onclick = function() {
+      if (currentAction) {
+        currentAction();
+      }
+      hideConfirm();
+    };
+    
+    function escapeHtml(unsafe) {
+      if (!unsafe) return '';
+      return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+    
+    // 頁面載入
+    document.addEventListener('DOMContentLoaded', function() {
+      loadMessages();
+    });
+    
+    // 自動重新整理（每30秒）
+    setInterval(loadMessages, 30000);
+  </script>
+</body>
+</html>
