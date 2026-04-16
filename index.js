@@ -262,6 +262,7 @@ app.delete('/api/all-photos', authMiddleware, async (req, res) => {
 });
 
 // ===== 核心邏輯：暫存照片，超時自動存相簿 =====
+// ===== 核心邏輯：暫存照片，超時自動存相簿 =====
 const userTempPhotos = new Map();
 
 async function handleEvent(event) {
@@ -293,7 +294,7 @@ async function handleEvent(event) {
             
             await client.replyMessage(event.replyToken, {
               type: 'text',
-              text: '📸 照片已儲存到相簿！'
+              text: '📸 照片已儲存到相簿！\n\n📌 因為你連續上傳照片，這張直接進相簿。\n如果要發圖文隨筆，請先傳一張照片，再輸入文字。'
             });
           } else {
             // 暫存照片，等待文字（5分鐘內）
@@ -325,7 +326,7 @@ async function handleEvent(event) {
             
             await client.replyMessage(event.replyToken, {
               type: 'text',
-              text: '🖼️ 照片已接收！\n⏰ 請在5分鐘內輸入文字，將會儲存為隨筆（含照片）。\n若超過5分鐘未輸入文字，照片將自動存入相簿。'
+              text: '🖼️ 照片已接收！\n\n📌 【圖文隨筆】使用說明：\n━━━━━━━━━━━━━━━━\n✅ 5分鐘內輸入文字 → 變成「圖文隨筆」\n   （這張照片不會出現在相簿）\n\n⏰ 超過5分鐘沒打字 → 自動存入「相簿」\n\n📸 連續傳多張照片 → 全部進「相簿」\n\n💬 只傳文字 → 純文字隨筆\n━━━━━━━━━━━━━━━━\n\n✨ 現在輸入文字，就能完成圖文隨筆！'
             });
           }
           resolve(result);
@@ -367,12 +368,13 @@ async function handleEvent(event) {
       try {
         await saveMessageToDB(message);
         
-        let replyText = `📝 隨筆已儲存！\n👤 作者：FernBrom\n🖼️ 包含照片`;
+        let replyText = `📝 圖文隨筆已儲存！\n━━━━━━━━━━━━━━━━\n👤 作者：FernBrom\n🖼️ 包含照片\n`;
         if (tags.length > 0) {
-          replyText += `\n🏷️ 標籤：${tags.join('、')}`;
+          replyText += `🏷️ 標籤：${tags.join('、')}\n`;
         } else {
-          replyText += `\n🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）`;
+          replyText += `🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）\n`;
         }
+        replyText += `━━━━━━━━━━━━━━━━\n✅ 這張照片不會出現在相簿，只會在隨筆網頁顯示。`;
         
         await client.replyMessage(event.replyToken, {
           type: 'text',
@@ -400,12 +402,13 @@ async function handleEvent(event) {
       try {
         await saveMessageToDB(message);
         
-        let replyText = `📝 隨筆已儲存！\n👤 作者：FernBrom`;
+        let replyText = `📝 純文字隨筆已儲存！\n━━━━━━━━━━━━━━━━\n👤 作者：FernBrom\n`;
         if (tags.length > 0) {
-          replyText += `\n🏷️ 標籤：${tags.join('、')}`;
+          replyText += `🏷️ 標籤：${tags.join('、')}\n`;
         } else {
-          replyText += `\n🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）`;
+          replyText += `🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）\n`;
         }
+        replyText += `━━━━━━━━━━━━━━━━\n💡 提示：先傳照片再傳文字，可以發圖文隨筆喔！`;
         
         await client.replyMessage(event.replyToken, {
           type: 'text',
@@ -426,32 +429,9 @@ async function handleEvent(event) {
   if (event.type === 'message') {
     await client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '目前只支援圖片和文字訊息喔！'
+      text: '目前只支援圖片和文字訊息喔！\n\n📌 支援功能：\n• 📸 純照片 → 相簿\n• 💬 純文字 → 隨筆\n• 🖼️ 照片+文字(5分鐘內) → 圖文隨筆'
     });
   }
   
   return null;
 }
-
-const PORT = process.env.PORT || 10000;
-
-connectMongo().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📝 隨筆儲存在 MongoDB: messages 集合`);
-    console.log(`📸 純相簿儲存在 MongoDB: photos 集合`);
-    console.log(`🏷️ 允許的標籤：${ALLOWED_TAGS.join(', ')}`);
-    console.log(`✨ 照片+文字(5分鐘內) → 隨筆（含照片）`);
-    console.log(`✨ 只傳照片或超過5分鐘 → 純相簿`);
-    console.log(`✨ 只傳文字 → 純文字隨筆`);
-  });
-}).catch(error => {
-  console.error('無法啟動伺服器:', error);
-  process.exit(1);
-});
-
-process.on('SIGINT', async () => {
-  console.log('正在關閉伺服器...');
-  await mongoClient.close();
-  process.exit(0);
-});
