@@ -181,25 +181,28 @@ app.get('/admin', authMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// 相簿 API - 只讀取 photosCollection 的照片
+// ===== 相簿 API - 直接從 Cloudinary 讀取所有照片（原來的邏輯）=====
 app.get('/api/images', async (req, res) => {
   try {
-    const photos = await photosCollection
-      .find({})
-      .sort({ timestamp: -1 })
-      .limit(50)
-      .toArray();
-    
+    const { cursor } = req.query;
+    const query = cloudinary.search
+      .expression('folder:line_uploads')
+      .sort_by('created_at', 'desc')
+      .max_results(8);
+
+    if (cursor) query.next_cursor(cursor);
+
+    const result = await query.execute();
     res.json({
-      images: photos.map(photo => ({ 
-        url: photo.url, 
-        time: photo.timestamp, 
-        public_id: photo.id 
+      images: result.resources.map(img => ({ 
+        url: img.secure_url, 
+        time: img.created_at, 
+        public_id: img.public_id 
       })),
-      nextCursor: null
+      nextCursor: result.next_cursor
     });
   } catch (error) { 
-    console.error('讀取相簿照片失敗:', error);
+    console.error('讀取照片失敗:', error);
     res.status(500).send(error.message); 
   }
 });
@@ -325,7 +328,7 @@ async function handleEvent(event) {
             
             await client.replyMessage(event.replyToken, {
               type: 'text',
-              text: '🖼️ 照片已接收！\n\n📌 【圖文隨筆】使用說明：\n━━━━━━━━━━━━━━━━\n✅ 5分鐘內輸入文字 → 變成「圖文隨筆」\n   （這張照片不會出現在相簿）\n\n⏰ 超過5分鐘沒打字 → 自動存入「相簿」\n\n📸 連續傳多張照片 → 全部進「相簿」\n\n💬 只傳文字 → 純文字隨筆\n━━━━━━━━━━━━━━━━\n\n✨ 現在輸入文字，就能完成圖文隨筆！'
+              text: '🖼️ 照片已接收！\n\n📌 【圖文隨筆】使用說明：\n━━━━━━━━━━━━━━━━\n✅ 5分鐘內輸入文字 → 變成「圖文隨筆」\n   （這張照片也會出現在相簿）\n\n⏰ 超過5分鐘沒打字 → 自動存入「相簿」\n\n📸 連續傳多張照片 → 全部進「相簿」\n\n💬 只傳文字 → 純文字隨筆\n━━━━━━━━━━━━━━━━\n\n✨ 現在輸入文字，就能完成圖文隨筆！'
             });
           }
           resolve(result);
@@ -373,7 +376,7 @@ async function handleEvent(event) {
         } else {
           replyText += `🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）\n`;
         }
-        replyText += `━━━━━━━━━━━━━━━━\n✅ 這張照片不會出現在相簿，只會在隨筆網頁顯示。`;
+        replyText += `━━━━━━━━━━━━━━━━\n📸 這張照片也會出現在相簿網頁。`;
         
         await client.replyMessage(event.replyToken, {
           type: 'text',
@@ -428,7 +431,7 @@ async function handleEvent(event) {
   if (event.type === 'message') {
     await client.replyMessage(event.replyToken, {
       type: 'text',
-      text: '目前只支援圖片和文字訊息喔！\n\n📌 支援功能：\n• 📸 純照片 → 相簿\n• 💬 純文字 → 隨筆\n• 🖼️ 照片+文字(5分鐘內) → 圖文隨筆'
+      text: '目前只支援圖片和文字訊息喔！\n\n📌 支援功能：\n• 📸 純照片 → 相簿\n• 💬 純文字 → 隨筆\n• 🖼️ 照片+文字(5分鐘內) → 圖文隨筆（照片也會進相簿）'
     });
   }
   
@@ -442,9 +445,9 @@ connectMongo().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📝 隨筆儲存在 MongoDB: messages 集合`);
-    console.log(`📸 純相簿儲存在 MongoDB: photos 集合`);
+    console.log(`📸 相簿直接從 Cloudinary 讀取所有照片`);
     console.log(`🏷️ 允許的標籤：${ALLOWED_TAGS.join(', ')}`);
-    console.log(`✨ 照片+文字(5分鐘內) → 隨筆（含照片）`);
+    console.log(`✨ 照片+文字(5分鐘內) → 圖文隨筆（照片也會出現在相簿）`);
     console.log(`✨ 只傳照片或超過5分鐘 → 純相簿`);
     console.log(`✨ 只傳文字 → 純文字隨筆`);
   });
