@@ -34,19 +34,24 @@ const client = new line.Client(config);
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/line_bot';
 const mongoClient = new MongoClient(mongoUri);
 let db;
-let messagesCollection;
+let messagesCollection;  // 隨筆集合（文字+照片）
+let photosCollection;    // 純相簿集合（只存照片）
 
 // 連接 MongoDB
 async function connectMongo() {
   try {
     await mongoClient.connect();
     db = mongoClient.db('line_bot');
-    messagesCollection = db.collection('messages');
+    messagesCollection = db.collection('messages');  // 隨筆
+    photosCollection = db.collection('photos');      // 純相簿
     
     // 建立索引以提升查詢效率
     await messagesCollection.createIndex({ timestamp: -1 });
     await messagesCollection.createIndex({ userId: 1 });
     await messagesCollection.createIndex({ tags: 1 });
+    
+    await photosCollection.createIndex({ timestamp: -1 });
+    await photosCollection.createIndex({ userId: 1 });
     
     console.log('✅ MongoDB 連接成功');
   } catch (error) {
@@ -76,13 +81,13 @@ function extractAndFilterTags(text) {
   return [...new Set(filteredTags)];
 }
 
-// 5. 訊息操作函數
+// 5. 訊息操作函數（隨筆）
 async function saveMessageToDB(message) {
   try {
     const result = await messagesCollection.insertOne(message);
     return result;
   } catch (error) {
-    console.error('儲存訊息失敗:', error);
+    console.error('儲存隨筆失敗:', error);
     throw error;
   }
 }
@@ -101,7 +106,7 @@ async function getMessagesFromDB(limit = 100, tag = null) {
       .toArray();
     return messages;
   } catch (error) {
-    console.error('讀取訊息失敗:', error);
+    console.error('讀取隨筆失敗:', error);
     return [];
   }
 }
@@ -117,7 +122,7 @@ async function deleteMessageFromDB(messageId) {
     const result = await messagesCollection.deleteOne(query);
     return result.deletedCount > 0;
   } catch (error) {
-    console.error('刪除訊息失敗:', error);
+    console.error('刪除隨筆失敗:', error);
     return false;
   }
 }
@@ -127,12 +132,63 @@ async function clearAllMessagesFromDB() {
     const result = await messagesCollection.deleteMany({});
     return result.deletedCount;
   } catch (error) {
-    console.error('清除所有訊息失敗:', error);
+    console.error('清除所有隨筆失敗:', error);
     throw error;
   }
 }
 
-// 6. 免密碼路由
+// 6. 照片操作函數（純相簿）
+async function savePhotoToDB(photo) {
+  try {
+    const result = await photosCollection.insertOne(photo);
+    return result;
+  } catch (error) {
+    console.error('儲存照片失敗:', error);
+    throw error;
+  }
+}
+
+async function getPhotosFromDB(limit = 100) {
+  try {
+    const photos = await photosCollection
+      .find({})
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .toArray();
+    return photos;
+  } catch (error) {
+    console.error('讀取照片失敗:', error);
+    return [];
+  }
+}
+
+async function deletePhotoFromDB(photoId) {
+  try {
+    let query = { id: photoId };
+    
+    if (ObjectId.isValid(photoId)) {
+      query = { $or: [{ id: photoId }, { _id: new ObjectId(photoId) }] };
+    }
+    
+    const result = await photosCollection.deleteOne(query);
+    return result.deletedCount > 0;
+  } catch (error) {
+    console.error('刪除照片失敗:', error);
+    return false;
+  }
+}
+
+async function clearAllPhotosFromDB() {
+  try {
+    const result = await photosCollection.deleteMany({});
+    return result.deletedCount;
+  } catch (error) {
+    console.error('清除所有照片失敗:', error);
+    throw error;
+  }
+}
+
+// 7. 免密碼路由
 app.get('/health', (req, res) => res.status(200).send('I am alive!'));
 
 app.post('/callback', line.middleware(config), (req, res) => {
@@ -144,15 +200,15 @@ app.post('/callback', line.middleware(config), (req, res) => {
     });
 });
 
-// 7. 靜態檔案路由
+// 8. 靜態檔案路由
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 相簿首頁
+// 相簿首頁（純照片）
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 簡單留言板頁面
+// 隨筆留言板頁面（文字+照片）
 app.get('/messages', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'messages.html'));
 });
@@ -162,8 +218,9 @@ app.get('/admin', authMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// 8. API 路由
-// [讀取] 照片 - 免密碼
+// 9. API 路由
+
+// [讀取] 純相簿照片 - 從 Cloudinary + DB
 app.get('/api/images', async (req, res) => {
   try {
     const { cursor } = req.query;
@@ -189,7 +246,7 @@ app.get('/api/images', async (req, res) => {
   }
 });
 
-// [讀取] 訊息 - 支援按標籤篩選
+// [讀取] 隨筆（文字+照片）
 app.get('/api/messages', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
@@ -198,15 +255,18 @@ app.get('/api/messages', async (req, res) => {
     const messages = await getMessagesFromDB(limit, tag);
     res.json(messages);
   } catch (error) {
-    console.error('讀取訊息失敗:', error);
+    console.error('讀取隨筆失敗:', error);
     res.status(500).send(error.message);
   }
 });
 
-// [刪除] 照片 - 需要密碼
+// [刪除] 純相簿照片 - 從 Cloudinary
 app.delete('/api/images', authMiddleware, async (req, res) => {
     try {
+        // 從 Cloudinary 刪除
         await cloudinary.uploader.destroy(req.query.id);
+        // 從 DB 刪除
+        await deletePhotoFromDB(req.query.id);
         res.json({ success: true });
     } catch (error) { 
         console.error('刪除照片失敗:', error);
@@ -214,37 +274,52 @@ app.delete('/api/images', authMiddleware, async (req, res) => {
     }
 });
 
-// [刪除] 訊息 - 需要密碼
+// [刪除] 隨筆 - 需要密碼
 app.delete('/api/messages/:id', authMiddleware, async (req, res) => {
     try {
         const success = await deleteMessageFromDB(req.params.id);
         if (success) {
             res.json({ success: true });
         } else {
-            res.status(404).json({ success: false, message: '訊息不存在' });
+            res.status(404).json({ success: false, message: '隨筆不存在' });
         }
     } catch (error) { 
-        console.error('刪除訊息失敗:', error);
+        console.error('刪除隨筆失敗:', error);
         res.status(500).send(error.message); 
     }
 });
 
-// [刪除] 所有訊息 - 需要密碼
+// [刪除] 所有隨筆 - 需要密碼
 app.delete('/api/messages', authMiddleware, async (req, res) => {
     try {
         const deletedCount = await clearAllMessagesFromDB();
         res.json({ success: true, deletedCount });
     } catch (error) { 
-        console.error('清除所有訊息失敗:', error);
+        console.error('清除所有隨筆失敗:', error);
         res.status(500).send(error.message); 
     }
 });
 
-// 9. LINE 事件處理
+// 新增：[刪除] 所有純相簿照片
+app.delete('/api/all-photos', authMiddleware, async (req, res) => {
+    try {
+        const deletedCount = await clearAllPhotosFromDB();
+        res.json({ success: true, deletedCount });
+    } catch (error) { 
+        console.error('清除所有照片失敗:', error);
+        res.status(500).send(error.message); 
+    }
+});
+
+// 10. LINE 事件處理 - 核心邏輯
+// 用來暫存使用者的照片，等待文字
+const userTempPhotos = new Map(); // userId -> { photoUrl, publicId, timestamp }
+
 async function handleEvent(event) {
   // 處理圖片訊息
   if (event.type === 'message' && event.message.type === 'image') {
     const stream = await client.getMessageContent(event.message.id);
+    const userId = event.source.userId;
     
     return new Promise((resolve, reject) => {
       const cloudinaryStream = cloudinary.uploader.upload_stream(
@@ -254,10 +329,43 @@ async function handleEvent(event) {
             console.error('上傳圖片失敗:', error);
             return reject(error);
           }
-          await client.replyMessage(event.replyToken, {
+          
+          // 檢查是否有暫存的照片（表示上一張還沒配對到文字）
+          if (userTempPhotos.has(userId)) {
+            // 如果已有暫存照片，直接當作純照片上傳到相簿
+            await savePhotoToDB({
+              id: result.public_id,
+              url: result.secure_url,
+              userId: userId,
+              displayName: 'FernBrom',
+              timestamp: new Date().toISOString(),
+              type: 'photo'
+            });
+            
+            await client.replyMessage(event.replyToken, {
               type: 'text',
-              text: '✅ 照片已上傳成功！'
-          });
+              text: '📸 照片已儲存到相簿！\n（如要加上文字，請在照片後輸入文字）'
+            });
+          } else {
+            // 暫存照片，等待文字
+            userTempPhotos.set(userId, {
+              photoUrl: result.secure_url,
+              publicId: result.public_id,
+              timestamp: Date.now()
+            });
+            
+            // 設定 5 分鐘過期
+            setTimeout(() => {
+              if (userTempPhotos.has(userId)) {
+                userTempPhotos.delete(userId);
+              }
+            }, 300000);
+            
+            await client.replyMessage(event.replyToken, {
+              type: 'text',
+              text: '🖼️ 照片已接收！\n請接著輸入文字內容，將會儲存為隨筆（含照片）。\n若只想儲存照片到相簿，請忽略此訊息。'
+            });
+          }
           resolve(result);
         }
       );
@@ -267,42 +375,84 @@ async function handleEvent(event) {
   
   // 處理文字訊息
   if (event.type === 'message' && event.message.type === 'text') {
-    // 提取並過濾標籤（只保留允許的標籤）
-    const tags = extractAndFilterTags(event.message.text);
+    const userId = event.source.userId;
+    const text = event.message.text;
     
-    // 統一把顯示名稱設為 FernBrom
-    const message = {
-      id: event.message.id,
-      text: event.message.text,
-      userId: event.source.userId,
-      displayName: 'FernBrom',  // 固定顯示名稱
-      timestamp: new Date().toISOString(),
-      type: 'text',
-      tags: tags
-    };
+    // 提取並過濾標籤
+    const tags = extractAndFilterTags(text);
     
-    // 儲存到 MongoDB
-    try {
-      await saveMessageToDB(message);
+    // 檢查是否有暫存的照片
+    if (userTempPhotos.has(userId)) {
+      // 有暫存照片 → 儲存為隨筆（文字+照片）
+      const tempPhoto = userTempPhotos.get(userId);
+      userTempPhotos.delete(userId);
       
-      // 回覆確認訊息（顯示過濾後的標籤）
-      let replyText = `📝 訊息已記錄！\n👤 作者：FernBrom`;
-      if (tags.length > 0) {
-        replyText += `\n🏷️ 標籤：${tags.join('、')}`;
-      } else {
-        replyText += `\n🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）`;
+      const message = {
+        id: event.message.id,
+        text: text,
+        imageUrl: tempPhoto.photoUrl,
+        imagePublicId: tempPhoto.publicId,
+        userId: userId,
+        displayName: 'FernBrom',
+        timestamp: new Date().toISOString(),
+        type: 'message_with_photo',
+        tags: tags
+      };
+      
+      try {
+        await saveMessageToDB(message);
+        
+        let replyText = `📝 隨筆已儲存！\n👤 作者：FernBrom\n🖼️ 包含照片`;
+        if (tags.length > 0) {
+          replyText += `\n🏷️ 標籤：${tags.join('、')}`;
+        } else {
+          replyText += `\n🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）`;
+        }
+        
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: replyText
+        });
+      } catch (error) {
+        console.error('儲存隨筆失敗:', error);
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '抱歉，儲存失敗，請稍後再試。'
+        });
       }
+    } else {
+      // 沒有暫存照片 → 純文字隨筆
+      const message = {
+        id: event.message.id,
+        text: text,
+        userId: userId,
+        displayName: 'FernBrom',
+        timestamp: new Date().toISOString(),
+        type: 'text_only',
+        tags: tags
+      };
       
-      await client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: replyText
-      });
-    } catch (error) {
-      console.error('儲存訊息失敗:', error);
-      await client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: '抱歉，訊息儲存失敗，請稍後再試。'
-      });
+      try {
+        await saveMessageToDB(message);
+        
+        let replyText = `📝 隨筆已儲存！\n👤 作者：FernBrom`;
+        if (tags.length > 0) {
+          replyText += `\n🏷️ 標籤：${tags.join('、')}`;
+        } else {
+          replyText += `\n🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）`;
+        }
+        
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: replyText
+        });
+      } catch (error) {
+        console.error('儲存隨筆失敗:', error);
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '抱歉，儲存失敗，請稍後再試。'
+        });
+      }
     }
     
     return null;
@@ -319,17 +469,21 @@ async function handleEvent(event) {
   return null;
 }
 
-// 10. 啟動伺服器
+// 11. 啟動伺服器
 const PORT = process.env.PORT || 10000;
 
 // 先連接資料庫，再啟動伺服器
 connectMongo().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📝 留言將儲存在 MongoDB: ${mongoUri}`);
+    console.log(`📝 隨筆將儲存在 MongoDB: ${mongoUri}`);
+    console.log(`📸 純相簿將儲存在 Cloudinary + MongoDB`);
     console.log(`🌐 CORS 已啟用，允許所有來源訪問`);
     console.log(`🏷️ 允許的標籤：${ALLOWED_TAGS.join(', ')}`);
     console.log(`👤 PO 文者顯示名稱統一為：FernBrom`);
+    console.log(`✨ 新模式：先傳照片再傳文字 = 隨筆（含照片）`);
+    console.log(`✨ 只傳照片 = 純相簿`);
+    console.log(`✨ 只傳文字 = 純文字隨筆`);
   });
 }).catch(error => {
   console.error('無法啟動伺服器:', error);
