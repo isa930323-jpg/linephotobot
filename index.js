@@ -67,21 +67,18 @@ const authMiddleware = basicAuth({
     realm: 'MyLineAlbum'
 });
 
-// 4. 允許的標籤列表（只保留這些標籤）
+// 4. 允許的標籤列表
 const ALLOWED_TAGS = ['#碳盤查', '#永續', '#淨零', '#生活', '#鹿角蕨', '#積水鳳梨', '#植物'];
 
-// 輔助函數：從文字中提取並過濾標籤
 function extractAndFilterTags(text) {
   const tagRegex = /#[\u4e00-\u9fa5a-zA-Z0-9]+/g;
   const matches = text.match(tagRegex);
   if (!matches) return [];
-  
-  // 過濾出允許的標籤，並去重
   const filteredTags = matches.filter(tag => ALLOWED_TAGS.includes(tag));
   return [...new Set(filteredTags)];
 }
 
-// 5. 訊息操作函數（隨筆）
+// 5. 隨筆操作函數
 async function saveMessageToDB(message) {
   try {
     const result = await messagesCollection.insertOne(message);
@@ -98,7 +95,6 @@ async function getMessagesFromDB(limit = 100, tag = null) {
     if (tag) {
       query = { tags: tag };
     }
-    
     const messages = await messagesCollection
       .find(query)
       .sort({ timestamp: -1 })
@@ -114,11 +110,9 @@ async function getMessagesFromDB(limit = 100, tag = null) {
 async function deleteMessageFromDB(messageId) {
   try {
     let query = { id: messageId };
-    
     if (ObjectId.isValid(messageId)) {
       query = { $or: [{ id: messageId }, { _id: new ObjectId(messageId) }] };
     }
-    
     const result = await messagesCollection.deleteOne(query);
     return result.deletedCount > 0;
   } catch (error) {
@@ -137,7 +131,7 @@ async function clearAllMessagesFromDB() {
   }
 }
 
-// 6. 照片操作函數（純相簿）
+// 6. 純相簿操作函數
 async function savePhotoToDB(photo) {
   try {
     const result = await photosCollection.insertOne(photo);
@@ -148,28 +142,12 @@ async function savePhotoToDB(photo) {
   }
 }
 
-async function getPhotosFromDB(limit = 100) {
-  try {
-    const photos = await photosCollection
-      .find({})
-      .sort({ timestamp: -1 })
-      .limit(limit)
-      .toArray();
-    return photos;
-  } catch (error) {
-    console.error('讀取照片失敗:', error);
-    return [];
-  }
-}
-
 async function deletePhotoFromDB(photoId) {
   try {
     let query = { id: photoId };
-    
     if (ObjectId.isValid(photoId)) {
       query = { $or: [{ id: photoId }, { _id: new ObjectId(photoId) }] };
     }
-    
     const result = await photosCollection.deleteOne(query);
     return result.deletedCount > 0;
   } catch (error) {
@@ -203,45 +181,40 @@ app.post('/callback', line.middleware(config), (req, res) => {
 // 8. 靜態檔案路由
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 相簿首頁（純照片）
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 隨筆留言板頁面（文字+照片）
 app.get('/messages', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'messages.html'));
 });
 
-// 管理頁需要密碼
 app.get('/admin', authMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 // 9. API 路由
 
-// [讀取] 純相簿照片 - 從 Cloudinary
+// ===== 🔧 修改：只讀取純相簿的照片（從 photosCollection）=====
 app.get('/api/images', async (req, res) => {
   try {
-    const { cursor } = req.query;
-    const query = cloudinary.search
-      .expression('folder:line_uploads')
-      .sort_by('created_at', 'desc')
-      .max_results(8);
-
-    if (cursor) query.next_cursor(cursor);
-
-    const result = await query.execute();
+    // 直接從 MongoDB 的 photosCollection 讀取，不從 Cloudinary 讀全部
+    const photos = await photosCollection
+      .find({})
+      .sort({ timestamp: -1 })
+      .limit(50)
+      .toArray();
+    
     res.json({
-      images: result.resources.map(img => ({ 
-        url: img.secure_url, 
-        time: img.created_at, 
-        public_id: img.public_id 
+      images: photos.map(photo => ({ 
+        url: photo.url, 
+        time: photo.timestamp, 
+        public_id: photo.id 
       })),
-      nextCursor: result.next_cursor
+      nextCursor: null
     });
   } catch (error) { 
-    console.error('讀取照片失敗:', error);
+    console.error('讀取相簿照片失敗:', error);
     res.status(500).send(error.message); 
   }
 });
@@ -251,7 +224,6 @@ app.get('/api/messages', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
     const tag = req.query.tag;
-    
     const messages = await getMessagesFromDB(limit, tag);
     res.json(messages);
   } catch (error) {
@@ -260,10 +232,12 @@ app.get('/api/messages', async (req, res) => {
   }
 });
 
-// [刪除] 純相簿照片 - 從 Cloudinary
+// [刪除] 純相簿照片
 app.delete('/api/images', authMiddleware, async (req, res) => {
     try {
+        // 從 Cloudinary 刪除
         await cloudinary.uploader.destroy(req.query.id);
+        // 從 DB 刪除
         await deletePhotoFromDB(req.query.id);
         res.json({ success: true });
     } catch (error) { 
@@ -272,7 +246,7 @@ app.delete('/api/images', authMiddleware, async (req, res) => {
     }
 });
 
-// [刪除] 隨筆 - 需要密碼
+// [刪除] 隨筆
 app.delete('/api/messages/:id', authMiddleware, async (req, res) => {
     try {
         const success = await deleteMessageFromDB(req.params.id);
@@ -287,7 +261,7 @@ app.delete('/api/messages/:id', authMiddleware, async (req, res) => {
     }
 });
 
-// [刪除] 所有隨筆 - 需要密碼
+// [刪除] 所有隨筆
 app.delete('/api/messages', authMiddleware, async (req, res) => {
     try {
         const deletedCount = await clearAllMessagesFromDB();
@@ -298,7 +272,7 @@ app.delete('/api/messages', authMiddleware, async (req, res) => {
     }
 });
 
-// 新增：[刪除] 所有純相簿照片
+// [刪除] 所有純相簿照片
 app.delete('/api/all-photos', authMiddleware, async (req, res) => {
     try {
         const deletedCount = await clearAllPhotosFromDB();
@@ -309,8 +283,7 @@ app.delete('/api/all-photos', authMiddleware, async (req, res) => {
     }
 });
 
-// 10. LINE 事件處理 - 核心邏輯
-// 用來暫存使用者的照片，等待文字
+// 10. LINE 事件處理
 const userTempPhotos = new Map();
 
 async function handleEvent(event) {
@@ -330,7 +303,7 @@ async function handleEvent(event) {
           
           // 檢查是否有暫存的照片
           if (userTempPhotos.has(userId)) {
-            // 已有暫存照片 → 當作純照片上傳到相簿
+            // 已有暫存照片 → 當作純照片儲存到相簿
             await savePhotoToDB({
               id: result.public_id,
               url: result.secure_url,
@@ -342,7 +315,7 @@ async function handleEvent(event) {
             
             await client.replyMessage(event.replyToken, {
               type: 'text',
-              text: '📸 照片已儲存到相簿！\n（如要加上文字，請在照片後輸入文字）'
+              text: '📸 照片已儲存到相簿！'
             });
           } else {
             // 暫存照片，等待文字
@@ -352,7 +325,6 @@ async function handleEvent(event) {
               timestamp: Date.now()
             });
             
-            // 設定 5 分鐘過期
             setTimeout(() => {
               if (userTempPhotos.has(userId)) {
                 userTempPhotos.delete(userId);
@@ -375,12 +347,10 @@ async function handleEvent(event) {
   if (event.type === 'message' && event.message.type === 'text') {
     const userId = event.source.userId;
     const text = event.message.text;
-    
     const tags = extractAndFilterTags(text);
     
-    // 檢查是否有暫存的照片
     if (userTempPhotos.has(userId)) {
-      // 有暫存照片 → 儲存為隨筆（文字+照片），不會進相簿
+      // 有暫存照片 → 儲存為隨筆（文字+照片），不會存到相簿
       const tempPhoto = userTempPhotos.get(userId);
       userTempPhotos.delete(userId);
       
@@ -471,14 +441,11 @@ const PORT = process.env.PORT || 10000;
 connectMongo().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📝 隨筆將儲存在 MongoDB: ${mongoUri}`);
-    console.log(`📸 純相簿將儲存在 Cloudinary + MongoDB`);
-    console.log(`🌐 CORS 已啟用，允許所有來源訪問`);
+    console.log(`📝 隨筆儲存在 MongoDB: messages 集合`);
+    console.log(`📸 純相簿儲存在 MongoDB: photos 集合`);
     console.log(`🏷️ 允許的標籤：${ALLOWED_TAGS.join(', ')}`);
-    console.log(`👤 PO 文者顯示名稱統一為：FernBrom`);
-    console.log(`✨ 新模式：先傳照片再傳文字 = 隨筆（含照片）→ 只出現在隨筆網頁`);
-    console.log(`✨ 只傳照片 = 純相簿 → 只出現在相簿網頁`);
-    console.log(`✨ 只傳文字 = 純文字隨筆 → 只出現在隨筆網頁`);
+    console.log(`✨ 照片+文字 → 只出現在隨筆，不會出現在相簿`);
+    console.log(`✨ 只傳照片 → 只出現在相簿`);
   });
 }).catch(error => {
   console.error('無法啟動伺服器:', error);
