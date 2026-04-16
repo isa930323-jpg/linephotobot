@@ -220,7 +220,7 @@ app.get('/admin', authMiddleware, (req, res) => {
 
 // 9. API 路由
 
-// [讀取] 純相簿照片 - 從 Cloudinary + DB
+// [讀取] 純相簿照片 - 從 Cloudinary
 app.get('/api/images', async (req, res) => {
   try {
     const { cursor } = req.query;
@@ -263,9 +263,7 @@ app.get('/api/messages', async (req, res) => {
 // [刪除] 純相簿照片 - 從 Cloudinary
 app.delete('/api/images', authMiddleware, async (req, res) => {
     try {
-        // 從 Cloudinary 刪除
         await cloudinary.uploader.destroy(req.query.id);
-        // 從 DB 刪除
         await deletePhotoFromDB(req.query.id);
         res.json({ success: true });
     } catch (error) { 
@@ -313,7 +311,7 @@ app.delete('/api/all-photos', authMiddleware, async (req, res) => {
 
 // 10. LINE 事件處理 - 核心邏輯
 // 用來暫存使用者的照片，等待文字
-const userTempPhotos = new Map(); // userId -> { photoUrl, publicId, timestamp }
+const userTempPhotos = new Map();
 
 async function handleEvent(event) {
   // 處理圖片訊息
@@ -330,9 +328,9 @@ async function handleEvent(event) {
             return reject(error);
           }
           
-          // 檢查是否有暫存的照片（表示上一張還沒配對到文字）
+          // 檢查是否有暫存的照片
           if (userTempPhotos.has(userId)) {
-            // 如果已有暫存照片，直接當作純照片上傳到相簿
+            // 已有暫存照片 → 當作純照片上傳到相簿
             await savePhotoToDB({
               id: result.public_id,
               url: result.secure_url,
@@ -378,12 +376,11 @@ async function handleEvent(event) {
     const userId = event.source.userId;
     const text = event.message.text;
     
-    // 提取並過濾標籤
     const tags = extractAndFilterTags(text);
     
     // 檢查是否有暫存的照片
     if (userTempPhotos.has(userId)) {
-      // 有暫存照片 → 儲存為隨筆（文字+照片）
+      // 有暫存照片 → 儲存為隨筆（文字+照片），不會進相簿
       const tempPhoto = userTempPhotos.get(userId);
       userTempPhotos.delete(userId);
       
@@ -458,7 +455,6 @@ async function handleEvent(event) {
     return null;
   }
   
-  // 處理其他類型的訊息
   if (event.type === 'message') {
     await client.replyMessage(event.replyToken, {
       type: 'text',
@@ -472,7 +468,6 @@ async function handleEvent(event) {
 // 11. 啟動伺服器
 const PORT = process.env.PORT || 10000;
 
-// 先連接資料庫，再啟動伺服器
 connectMongo().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
@@ -481,16 +476,15 @@ connectMongo().then(() => {
     console.log(`🌐 CORS 已啟用，允許所有來源訪問`);
     console.log(`🏷️ 允許的標籤：${ALLOWED_TAGS.join(', ')}`);
     console.log(`👤 PO 文者顯示名稱統一為：FernBrom`);
-    console.log(`✨ 新模式：先傳照片再傳文字 = 隨筆（含照片）`);
-    console.log(`✨ 只傳照片 = 純相簿`);
-    console.log(`✨ 只傳文字 = 純文字隨筆`);
+    console.log(`✨ 新模式：先傳照片再傳文字 = 隨筆（含照片）→ 只出現在隨筆網頁`);
+    console.log(`✨ 只傳照片 = 純相簿 → 只出現在相簿網頁`);
+    console.log(`✨ 只傳文字 = 純文字隨筆 → 只出現在隨筆網頁`);
   });
 }).catch(error => {
   console.error('無法啟動伺服器:', error);
   process.exit(1);
 });
 
-// 優雅關閉
 process.on('SIGINT', async () => {
   console.log('正在關閉伺服器...');
   await mongoClient.close();
