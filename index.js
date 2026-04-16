@@ -262,7 +262,6 @@ app.delete('/api/all-photos', authMiddleware, async (req, res) => {
 });
 
 // ===== 核心邏輯：暫存照片，超時自動存相簿 =====
-// ===== 核心邏輯：暫存照片，超時自動存相簿 =====
 const userTempPhotos = new Map();
 
 async function handleEvent(event) {
@@ -435,3 +434,27 @@ async function handleEvent(event) {
   
   return null;
 }
+
+// 啟動伺服器
+const PORT = process.env.PORT || 10000;
+
+connectMongo().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📝 隨筆儲存在 MongoDB: messages 集合`);
+    console.log(`📸 純相簿儲存在 MongoDB: photos 集合`);
+    console.log(`🏷️ 允許的標籤：${ALLOWED_TAGS.join(', ')}`);
+    console.log(`✨ 照片+文字(5分鐘內) → 隨筆（含照片）`);
+    console.log(`✨ 只傳照片或超過5分鐘 → 純相簿`);
+    console.log(`✨ 只傳文字 → 純文字隨筆`);
+  });
+}).catch(error => {
+  console.error('無法啟動伺服器:', error);
+  process.exit(1);
+});
+
+process.on('SIGINT', async () => {
+  console.log('正在關閉伺服器...');
+  await mongoClient.close();
+  process.exit(0);
+});
