@@ -8,7 +8,6 @@ const cors = require('cors');
 
 const app = express();
 
-// ===== 基礎中間件 =====
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -16,17 +15,6 @@ app.use(cors({
 }));
 app.options('*', cors());
 
-// 重要：JSON 解析器（放在路由之前）
-app.use(express.json());
-
-// ===== Instagram 設定 =====
-const IG_VERIFY_TOKEN = process.env.IG_VERIFY_TOKEN || 'your_verify_token_here';
-const IG_ACCESS_TOKEN = process.env.IG_ACCESS_TOKEN;
-
-// Instagram 使用者暫存照片
-const igUserTempPhotos = new Map();
-
-// ===== LINE 設定 =====
 const config = {
   channelAccessToken: process.env.LINE_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -40,7 +28,6 @@ cloudinary.config({
 
 const client = new line.Client(config);
 
-// ===== MongoDB 設定 =====
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/line_bot';
 const mongoClient = new MongoClient(mongoUri);
 let db;
@@ -67,14 +54,12 @@ async function connectMongo() {
   }
 }
 
-// ===== 認證中間件 =====
 const authMiddleware = basicAuth({
     users: { [process.env.WEB_USER]: process.env.WEB_PASS },
     challenge: true,
     realm: 'MyLineAlbum'
 });
 
-// ===== 標籤設定 =====
 const ALLOWED_TAGS = ['#碳盤查', '#永續', '#淨零', '#生活', '#鹿角蕨', '#積水鳳梨', '#植物'];
 
 function extractAndFilterTags(text) {
@@ -85,7 +70,6 @@ function extractAndFilterTags(text) {
   return [...new Set(filteredTags)];
 }
 
-// ===== 資料庫操作函數 =====
 async function saveMessageToDB(message) {
   try {
     const result = await messagesCollection.insertOne(message);
@@ -172,397 +156,8 @@ async function clearAllPhotosFromDB() {
   }
 }
 
-// ===== Instagram 函數 =====
-
-// 發送 Instagram 訊息
-async function sendInstagramMessage(recipientId, text) {
-  if (!IG_ACCESS_TOKEN) {
-    console.log('⚠️ 未設定 IG_ACCESS_TOKEN，無法發送回覆');
-    return;
-  }
-  
-  try {
-    const url = `https://graph.facebook.com/v22.0/me/messages?access_token=${IG_ACCESS_TOKEN}`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipient: { id: recipientId },
-        message: { text: text }
-      })
-    });
-    
-    const result = await response.json();
-    console.log('📤 Instagram 回覆發送:', result);
-  } catch (error) {
-    console.error('發送 Instagram 訊息失敗:', error);
-  }
-}
-
-// 處理 Instagram 圖片
-async function handleInstagramImage(senderId, imageUrl, event) {
-  try {
-    const response = await fetch(imageUrl);
-    const buffer = await response.buffer();
-    
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        { folder: 'instagram_uploads' },
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
-      uploadStream.end(buffer);
-    });
-    
-    if (igUserTempPhotos.has(senderId)) {
-      await savePhotoToDB({
-        id: uploadResult.public_id,
-        url: uploadResult.secure_url,
-        userId: senderId,
-        displayName: 'Instagram',
-        platform: 'instagram',
-        timestamp: new Date().toISOString(),
-        type: 'photo'
-      });
-      
-      await sendInstagramMessage(senderId, '📸 照片已儲存到相簿！\n\n📌 因為你連續上傳照片，這張直接進相簿。');
-      
-    } else {
-      const timeoutId = setTimeout(async () => {
-        if (igUserTempPhotos.has(senderId)) {
-          const tempPhoto = igUserTempPhotos.get(senderId);
-          console.log(`⏰ Instagram 照片超時，自動存入相簿: ${tempPhoto.publicId}`);
-          
-          await savePhotoToDB({
-            id: tempPhoto.publicId,
-            url: tempPhoto.photoUrl,
-            userId: senderId,
-            displayName: 'Instagram',
-            platform: 'instagram',
-            timestamp: new Date().toISOString(),
-            type: 'photo'
-          });
-          
-          igUserTempPhotos.delete(senderId);
-        }
-      }, 300000);
-      
-      igUserTempPhotos.set(senderId, {
-        photoUrl: uploadResult.secure_url,
-        publicId: uploadResult.public_id,
-        timeoutId: timeoutId,
-        timestamp: Date.now()
-      });
-      
-      await sendInstagramMessage(senderId, '🖼️ 照片已接收！\n\n✅ 5分鐘內輸入文字 → 圖文隨筆\n⏰ 超過5分鐘 → 自動存入相簿');
-    }
-    
-  } catch (error) {
-    console.error('處理 Instagram 圖片失敗:', error);
-  }
-}
-
-// 處理 Instagram 事件
-async function handleInstagramEvent(event) {
-  const senderId = event.sender.id;
-  const message = event.message;
-  
-  if (!message) return;
-  
-  // 處理圖片
-  if (message.attachments && message.attachments.length > 0) {
-    for (const attachment of message.attachments) {
-      if (attachment.type === 'image') {
-        const imageUrl = attachment.payload.url;
-        await handleInstagramImage(senderId, imageUrl, event);
-      }
-    }
-  }
-  
-  // 處理文字
-  if (message.text) {
-    const text = message.text;
-    const tags = extractAndFilterTags(text);
-    
-    if (igUserTempPhotos.has(senderId)) {
-      const tempPhoto = igUserTempPhotos.get(senderId);
-      
-      if (tempPhoto.timeoutId) {
-        clearTimeout(tempPhoto.timeoutId);
-      }
-      igUserTempPhotos.delete(senderId);
-      
-      const messageData = {
-        id: event.timestamp.toString(),
-        text: text,
-        imageUrl: tempPhoto.photoUrl,
-        imagePublicId: tempPhoto.publicId,
-        userId: senderId,
-        displayName: 'Instagram',
-        platform: 'instagram',
-        timestamp: new Date().toISOString(),
-        type: 'message_with_photo',
-        tags: tags
-      };
-      
-      await saveMessageToDB(messageData);
-      await sendInstagramMessage(senderId, `📝 圖文隨筆已儲存！\n🏷️ 標籤：${tags.length > 0 ? tags.join('、') : '無'}`);
-      
-    } else {
-      const messageData = {
-        id: event.timestamp.toString(),
-        text: text,
-        userId: senderId,
-        displayName: 'Instagram',
-        platform: 'instagram',
-        timestamp: new Date().toISOString(),
-        type: 'text_only',
-        tags: tags
-      };
-      
-      await saveMessageToDB(messageData);
-      await sendInstagramMessage(senderId, `📝 純文字隨筆已儲存！\n💡 先傳照片再傳文字，可發圖文隨筆`);
-    }
-  }
-}
-
-// ===== LINE 核心邏輯 =====
-const userTempPhotos = new Map();
-
-async function handleEvent(event) {
-  // 處理圖片訊息
-  if (event.type === 'message' && event.message.type === 'image') {
-    const stream = await client.getMessageContent(event.message.id);
-    const userId = event.source.userId;
-    
-    return new Promise((resolve, reject) => {
-      const cloudinaryStream = cloudinary.uploader.upload_stream(
-        { folder: 'line_uploads' },
-        async (error, result) => {
-          if (error) {
-            console.error('上傳圖片失敗:', error);
-            return reject(error);
-          }
-          
-          if (userTempPhotos.has(userId)) {
-            await savePhotoToDB({
-              id: result.public_id,
-              url: result.secure_url,
-              userId: userId,
-              displayName: 'FernBrom',
-              timestamp: new Date().toISOString(),
-              type: 'photo'
-            });
-            
-            await client.replyMessage(event.replyToken, {
-              type: 'text',
-              text: '📸 照片已儲存到相簿！\n\n📌 因為你連續上傳照片，這張直接進相簿。'
-            });
-          } else {
-            const timeoutId = setTimeout(async () => {
-              if (userTempPhotos.has(userId)) {
-                const tempPhoto = userTempPhotos.get(userId);
-                console.log(`⏰ 照片超時，自動存入相簿: ${tempPhoto.publicId}`);
-                
-                await savePhotoToDB({
-                  id: tempPhoto.publicId,
-                  url: tempPhoto.photoUrl,
-                  userId: userId,
-                  displayName: 'FernBrom',
-                  timestamp: new Date().toISOString(),
-                  type: 'photo'
-                });
-                
-                userTempPhotos.delete(userId);
-              }
-            }, 300000);
-            
-            userTempPhotos.set(userId, {
-              photoUrl: result.secure_url,
-              publicId: result.public_id,
-              timeoutId: timeoutId,
-              timestamp: Date.now()
-            });
-            
-            await client.replyMessage(event.replyToken, {
-              type: 'text',
-              text: '🖼️ 照片已接收！\n\n✅ 5分鐘內輸入文字 → 圖文隨筆\n⏰ 超過5分鐘 → 自動存入相簿'
-            });
-          }
-          resolve(result);
-        }
-      );
-      stream.pipe(cloudinaryStream);
-    });
-  }
-  
-  // 處理文字訊息
-  if (event.type === 'message' && event.message.type === 'text') {
-    const userId = event.source.userId;
-    const text = event.message.text;
-    const tags = extractAndFilterTags(text);
-    
-    if (userTempPhotos.has(userId)) {
-      const tempPhoto = userTempPhotos.get(userId);
-      
-      if (tempPhoto.timeoutId) {
-        clearTimeout(tempPhoto.timeoutId);
-      }
-      userTempPhotos.delete(userId);
-      
-      const message = {
-        id: event.message.id,
-        text: text,
-        imageUrl: tempPhoto.photoUrl,
-        imagePublicId: tempPhoto.publicId,
-        userId: userId,
-        displayName: 'FernBrom',
-        timestamp: new Date().toISOString(),
-        type: 'message_with_photo',
-        tags: tags
-      };
-      
-      try {
-        await saveMessageToDB(message);
-        
-        let replyText = `📝 圖文隨筆已儲存！\n━━━━━━━━━━━━━━━━\n👤 作者：FernBrom\n🖼️ 包含照片\n`;
-        if (tags.length > 0) {
-          replyText += `🏷️ 標籤：${tags.join('、')}\n`;
-        } else {
-          replyText += `🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）\n`;
-        }
-        replyText += `━━━━━━━━━━━━━━━━\n📸 這張照片也會出現在相簿網頁。`;
-        
-        await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: replyText
-        });
-      } catch (error) {
-        console.error('儲存隨筆失敗:', error);
-        await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: '抱歉，儲存失敗，請稍後再試。'
-        });
-      }
-    } else {
-      const message = {
-        id: event.message.id,
-        text: text,
-        userId: userId,
-        displayName: 'FernBrom',
-        timestamp: new Date().toISOString(),
-        type: 'text_only',
-        tags: tags
-      };
-      
-      try {
-        await saveMessageToDB(message);
-        
-        let replyText = `📝 純文字隨筆已儲存！\n━━━━━━━━━━━━━━━━\n👤 作者：FernBrom\n`;
-        if (tags.length > 0) {
-          replyText += `🏷️ 標籤：${tags.join('、')}\n`;
-        } else {
-          replyText += `🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）\n`;
-        }
-        replyText += `━━━━━━━━━━━━━━━━\n💡 提示：先傳照片再傳文字，可以發圖文隨筆喔！`;
-        
-        await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: replyText
-        });
-      } catch (error) {
-        console.error('儲存隨筆失敗:', error);
-        await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: '抱歉，儲存失敗，請稍後再試。'
-        });
-      }
-    }
-    
-    return null;
-  }
-  
-  if (event.type === 'message') {
-    await client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '目前只支援圖片和文字訊息喔！\n\n📌 支援功能：\n• 📸 純照片 → 相簿\n• 💬 純文字 → 隨筆\n• 🖼️ 照片+文字(5分鐘內) → 圖文隨筆'
-    });
-  }
-  
-  return null;
-}
-
-// ===== 路由 =====
-
-// 健康檢查
 app.get('/health', (req, res) => res.status(200).send('I am alive!'));
 
-// ===== Instagram Webhook（必須放在靜態檔案之前）=====
-
-// GET 驗證
-app.get('/instagram/webhook', (req, res) => {
-  console.log('📥 GET 請求 - 完整網址:', req.url);
-  console.log('📥 GET 請求 - 查詢參數:', req.query);
-  
-  let mode = req.query['hub.mode'];
-  let challenge = req.query['hub.challenge'];
-  let verifyToken = req.query['hub.verify_token'];
-  
-  console.log(`🔍 解析後 - mode=${mode}, challenge=${challenge}, token=${verifyToken}`);
-  console.log(`🔍 預期 token: ${IG_VERIFY_TOKEN}`);
-  
-  if (mode === 'subscribe' && verifyToken === IG_VERIFY_TOKEN) {
-    console.log('✅ Instagram Webhook 驗證成功');
-    res.status(200).send(challenge);
-  } else {
-    console.log('❌ Instagram Webhook 驗證失敗');
-    res.status(403).send(`驗證失敗: mode=${mode}, token_provided=${verifyToken}`);
-  }
-});
-
-// POST 接收事件
-app.post('/instagram/webhook', async (req, res) => {
-  console.log('📥 POST 請求 - body:', JSON.stringify(req.body, null, 2));
-  
-  // 如果是驗證請求（第一次設定時）
-  if (req.body['hub.challenge']) {
-    const challenge = req.body['hub.challenge'];
-    const verifyToken = req.body['hub.verify_token'];
-    const mode = req.body['hub.mode'];
-    
-    console.log(`🔍 POST驗證 - mode=${mode}, token=${verifyToken}`);
-    
-    if (mode === 'subscribe' && verifyToken === IG_VERIFY_TOKEN) {
-      console.log('✅ Instagram Webhook 驗證成功 (POST)');
-      res.status(200).send(challenge);
-      return;
-    } else {
-      console.log('❌ POST 驗證失敗');
-      res.status(403).send('驗證失敗');
-      return;
-    }
-  }
-  
-  // 正式事件處理
-  console.log('📨 Instagram Webhook 收到事件');
-  res.status(200).send('OK');
-  
-  try {
-    const entries = req.body.entry || [];
-    for (const entry of entries) {
-      const messaging = entry.messaging || [];
-      for (const event of messaging) {
-        await handleInstagramEvent(event);
-      }
-    }
-  } catch (error) {
-    console.error('處理 Instagram 事件失敗:', error);
-  }
-});
-
-// LINE Callback
 app.post('/callback', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -572,10 +167,8 @@ app.post('/callback', line.middleware(config), (req, res) => {
     });
 });
 
-// 靜態檔案
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 前端頁面
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -588,8 +181,7 @@ app.get('/admin', authMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// ===== API 路由 =====
-
+// ===== 相簿 API =====
 app.get('/api/images', async (req, res) => {
   try {
     const { cursor } = req.query;
@@ -672,28 +264,192 @@ app.delete('/api/all-photos', authMiddleware, async (req, res) => {
     }
 });
 
-// 測試 Instagram 訊息發送
-app.post('/api/test-ig-message', authMiddleware, async (req, res) => {
-  const { userId, text } = req.body;
-  if (!userId || !text) {
-    return res.status(400).json({ error: '需要 userId 和 text' });
+// ===== 核心邏輯：暫存照片，超時自動存相簿 =====
+const userTempPhotos = new Map();
+
+async function handleEvent(event) {
+  // 處理圖片訊息
+  if (event.type === 'message' && event.message.type === 'image') {
+    const stream = await client.getMessageContent(event.message.id);
+    const userId = event.source.userId;
+    
+    return new Promise((resolve, reject) => {
+      const cloudinaryStream = cloudinary.uploader.upload_stream(
+        { folder: 'line_uploads' },
+        async (error, result) => {
+          if (error) {
+            console.error('上傳圖片失敗:', error);
+            return reject(error);
+          }
+          
+          // 檢查是否有暫存的照片（連續傳多張）
+          if (userTempPhotos.has(userId)) {
+            // 已有暫存照片 → 直接存相簿（不等待文字）
+            await savePhotoToDB({
+              id: result.public_id,
+              url: result.secure_url,
+              userId: userId,
+              displayName: 'FernBrom',
+              timestamp: new Date().toISOString(),
+              type: 'photo'
+            });
+            
+            await client.replyMessage(event.replyToken, {
+              type: 'text',
+              text: '📸 照片已儲存到相簿！\n\n📌 因為你連續上傳照片，這張直接進相簿。\n如果要發圖文隨筆，請先傳一張照片，再輸入文字。'
+            });
+          } else {
+            // 暫存照片，等待文字（5分鐘內）
+            const timeoutId = setTimeout(async () => {
+              // 超時後，如果還有這張照片，自動存到相簿
+              if (userTempPhotos.has(userId)) {
+                const tempPhoto = userTempPhotos.get(userId);
+                console.log(`⏰ 照片超時，自動存入相簿: ${tempPhoto.publicId}`);
+                
+                await savePhotoToDB({
+                  id: tempPhoto.publicId,
+                  url: tempPhoto.photoUrl,
+                  userId: userId,
+                  displayName: 'FernBrom',
+                  timestamp: new Date().toISOString(),
+                  type: 'photo'
+                });
+                
+                userTempPhotos.delete(userId);
+              }
+            }, 300000); // 5分鐘
+            
+            userTempPhotos.set(userId, {
+              photoUrl: result.secure_url,
+              publicId: result.public_id,
+              timeoutId: timeoutId,
+              timestamp: Date.now()
+            });
+            
+            await client.replyMessage(event.replyToken, {
+              type: 'text',
+              text: '🖼️ 照片已接收！\n\n📌 【圖文隨筆】使用說明：\n━━━━━━━━━━━━━━━━\n✅ 5分鐘內輸入文字 → 變成「圖文隨筆」\n   （這張照片也會出現在相簿）\n\n⏰ 超過5分鐘沒打字 → 自動存入「相簿」\n\n📸 連續傳多張照片 → 全部進「相簿」\n\n💬 只傳文字 → 純文字隨筆\n━━━━━━━━━━━━━━━━\n\n✨ 現在輸入文字，就能完成圖文隨筆！'
+            });
+          }
+          resolve(result);
+        }
+      );
+      stream.pipe(cloudinaryStream);
+    });
   }
   
-  await sendInstagramMessage(userId, text);
-  res.json({ success: true, message: '已發送' });
-});
+  // 處理文字訊息
+  if (event.type === 'message' && event.message.type === 'text') {
+    const userId = event.source.userId;
+    const text = event.message.text;
+    const tags = extractAndFilterTags(text);
+    
+    // 檢查是否有暫存的照片
+    if (userTempPhotos.has(userId)) {
+      // 有暫存照片 → 儲存為隨筆（文字+照片）
+      const tempPhoto = userTempPhotos.get(userId);
+      
+      // 清除超時定時器
+      if (tempPhoto.timeoutId) {
+        clearTimeout(tempPhoto.timeoutId);
+      }
+      userTempPhotos.delete(userId);
+      
+      const message = {
+        id: event.message.id,
+        text: text,
+        imageUrl: tempPhoto.photoUrl,
+        imagePublicId: tempPhoto.publicId,
+        userId: userId,
+        displayName: 'FernBrom',
+        timestamp: new Date().toISOString(),
+        type: 'message_with_photo',
+        tags: tags
+      };
+      
+      try {
+        await saveMessageToDB(message);
+        
+        let replyText = `📝 圖文隨筆已儲存！\n━━━━━━━━━━━━━━━━\n👤 作者：FernBrom\n🖼️ 包含照片\n`;
+        if (tags.length > 0) {
+          replyText += `🏷️ 標籤：${tags.join('、')}\n`;
+        } else {
+          replyText += `🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）\n`;
+        }
+        replyText += `━━━━━━━━━━━━━━━━\n📸 這張照片也會出現在相簿網頁。`;
+        
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: replyText
+        });
+      } catch (error) {
+        console.error('儲存隨筆失敗:', error);
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '抱歉，儲存失敗，請稍後再試。'
+        });
+      }
+    } else {
+      // 沒有暫存照片 → 純文字隨筆
+      const message = {
+        id: event.message.id,
+        text: text,
+        userId: userId,
+        displayName: 'FernBrom',
+        timestamp: new Date().toISOString(),
+        type: 'text_only',
+        tags: tags
+      };
+      
+      try {
+        await saveMessageToDB(message);
+        
+        let replyText = `📝 純文字隨筆已儲存！\n━━━━━━━━━━━━━━━━\n👤 作者：FernBrom\n`;
+        if (tags.length > 0) {
+          replyText += `🏷️ 標籤：${tags.join('、')}\n`;
+        } else {
+          replyText += `🏷️ 無效標籤（僅支援：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物）\n`;
+        }
+        replyText += `━━━━━━━━━━━━━━━━\n💡 提示：先傳照片再傳文字，可以發圖文隨筆喔！`;
+        
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: replyText
+        });
+      } catch (error) {
+        console.error('儲存隨筆失敗:', error);
+        await client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '抱歉，儲存失敗，請稍後再試。'
+        });
+      }
+    }
+    
+    return null;
+  }
+  
+  if (event.type === 'message') {
+    await client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '目前只支援圖片和文字訊息喔！\n\n📌 支援功能：\n• 📸 純照片 → 相簿\n• 💬 純文字 → 隨筆\n• 🖼️ 照片+文字(5分鐘內) → 圖文隨筆（照片也會進相簿）'
+    });
+  }
+  
+  return null;
+}
 
-// ===== 啟動伺服器 =====
+// 啟動伺服器
 const PORT = process.env.PORT || 10000;
 
 connectMongo().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🔑 IG_VERIFY_TOKEN 已設定: ${IG_VERIFY_TOKEN !== 'your_verify_token_here' ? '是' : '否（使用預設值）'}`);
-    console.log(`🔑 IG_ACCESS_TOKEN 已設定: ${IG_ACCESS_TOKEN ? '是' : '否'}`);
     console.log(`📝 隨筆儲存在 MongoDB: messages 集合`);
     console.log(`📸 相簿直接從 Cloudinary 讀取所有照片`);
     console.log(`🏷️ 允許的標籤：${ALLOWED_TAGS.join(', ')}`);
+    console.log(`✨ 照片+文字(5分鐘內) → 圖文隨筆（照片也會出現在相簿）`);
+    console.log(`✨ 只傳照片或超過5分鐘 → 純相簿`);
+    console.log(`✨ 只傳文字 → 純文字隨筆`);
   });
 }).catch(error => {
   console.error('無法啟動伺服器:', error);
