@@ -1,5 +1,11 @@
 const express = require('express');
 const line = require('@line/bot-sdk');
+// ===== Instagram 設定 =====
+const IG_VERIFY_TOKEN = process.env.IG_VERIFY_TOKEN || 'your_verify_token_here';
+const IG_ACCESS_TOKEN = process.env.IG_ACCESS_TOKEN;
+
+// Instagram 使用者暫存照片（比照 LINE 的邏輯）
+const igUserTempPhotos = new Map();
 const cloudinary = require('cloudinary').v2;
 const path = require('path');
 const basicAuth = require('express-basic-auth');
@@ -157,6 +163,38 @@ async function clearAllPhotosFromDB() {
 }
 
 app.get('/health', (req, res) => res.status(200).send('I am alive!'));
+// ===== Instagram Webhook 驗證（GET）=====
+app.get('/instagram/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const challenge = req.query['hub.challenge'];
+  const verifyToken = req.query['hub.verify_token'];
+
+  if (mode === 'subscribe' && verifyToken === IG_VERIFY_TOKEN) {
+    console.log('✅ Instagram Webhook 驗證成功');
+    res.status(200).send(challenge);
+  } else {
+    console.log('❌ Instagram Webhook 驗證失敗');
+    res.status(403).send('驗證失敗');
+  }
+});// ===== Instagram Webhook 接收事件（POST）=====
+app.post('/instagram/webhook', async (req, res) => {
+  console.log('📨 Instagram Webhook 收到:', JSON.stringify(req.body, null, 2));
+  
+  // 立即回傳 200，避免 IG 重送
+  res.status(200).send('OK');
+  
+  try {
+    const entries = req.body.entry || [];
+    for (const entry of entries) {
+      const messaging = entry.messaging || [];
+      for (const event of messaging) {
+        await handleInstagramEvent(event);
+      }
+    }
+  } catch (error) {
+    console.error('處理 Instagram 事件失敗:', error);
+  }
+});
 
 app.post('/callback', line.middleware(config), (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
@@ -337,7 +375,171 @@ async function handleEvent(event) {
       stream.pipe(cloudinaryStream);
     });
   }
+  // ===== 處理 Instagram 事件 =====
+async function handleInstagramEvent(event) {
+  const senderId = event.sender.id;
+  const message = event.message;
   
+  if (!message) return;
+  
+  // 處理圖片訊息
+  if (message.attachments && message.attachments.length > 0) {
+    for (const attachment of message.attachments) {
+      if (attachment.type === 'image') {
+        const imageUrl = attachment.payload.url;
+        await handleInstagramImage(senderId, imageUrl, event);
+      }
+    }
+  }
+  
+  // 處理文字訊息
+  if (message.text) {
+    const text = message.text;
+    const tags = extractAndFilterTags(text);
+    
+    // 檢查是否有暫存的照片
+    if (igUserTempPhotos.has(senderId)) {
+      // 有暫存照片 → 儲存為圖文隨筆（文字+照片）
+      const tempPhoto = igUserTempPhotos.get(senderId);
+      
+      if (tempPhoto.timeoutId) {
+        clearTimeout(tempPhoto.timeoutId);
+      }
+      igUserTempPhotos.delete(senderId);
+      
+      const messageData = {
+        id: event.timestamp.toString(),
+        text: text,
+        imageUrl: tempPhoto.photoUrl,
+        imagePublicId: tempPhoto.publicId,
+        userId: senderId,
+        displayName: 'Instagram',
+        platform: 'instagram',
+        timestamp: new Date().toISOString(),
+        type: 'message_with_photo',
+        tags: tags
+      };
+      
+      await saveMessageToDB(messageData);
+      console.log(`📝 Instagram 圖文隨筆已儲存: ${text.substring(0, 50)}`);
+      
+      // 回覆確認（選用，IG 私訊回覆需要發送 API）
+      await sendInstagramMessage(senderId, `📝 圖文隨筆已儲存！\n🏷️ 標籤：${tags.length > 0 ? tags.join('、') : '無效標籤'}`);
+      
+    } else {
+      // 沒有暫存照片 → 純文字隨筆
+      const messageData = {
+        id: event.timestamp.toString(),
+        text: text,
+        userId: senderId,
+        displayName: 'Instagram',
+        platform: 'instagram',
+        timestamp: new Date().toISOString(),
+        type: 'text_only',
+        tags: tags
+      };
+      
+      await saveMessageToDB(messageData);
+      console.log(`📝 Instagram 純文字隨筆已儲存: ${text.substring(0, 50)}`);
+      
+      await sendInstagramMessage(senderId, `📝 純文字隨筆已儲存！\n💡 提示：先傳照片再傳文字，可以發圖文隨筆喔！\n🏷️ 有效標籤：#碳盤查 #永續 #淨零 #生活 #鹿角蕨 #積水鳳梨 #植物`);
+    }
+  }
+}
+
+// ===== 處理 Instagram 圖片 =====
+async function handleInstagramImage(senderId, imageUrl, event) {
+  try {
+    // 下載圖片並上傳到 Cloudinary
+    const response = await fetch(imageUrl);
+    const buffer = await response.buffer();
+    
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { folder: 'instagram_uploads' },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      uploadStream.end(buffer);
+    });
+    
+    // 檢查是否有暫存的照片
+    if (igUserTempPhotos.has(senderId)) {
+      // 連續傳多張 → 直接存相簿
+      await savePhotoToDB({
+        id: uploadResult.public_id,
+        url: uploadResult.secure_url,
+        userId: senderId,
+        displayName: 'Instagram',
+        platform: 'instagram',
+        timestamp: new Date().toISOString(),
+        type: 'photo'
+      });
+      
+      await sendInstagramMessage(senderId, '📸 照片已儲存到相簿！\n\n📌 因為你連續上傳照片，這張直接進相簿。\n如果要發圖文隨筆，請先傳一張照片，再輸入文字。');
+      
+    } else {
+      // 暫存照片，等待文字（5分鐘）
+      const timeoutId = setTimeout(async () => {
+        if (igUserTempPhotos.has(senderId)) {
+          const tempPhoto = igUserTempPhotos.get(senderId);
+          console.log(`⏰ Instagram 照片超時，自動存入相簿: ${tempPhoto.publicId}`);
+          
+          await savePhotoToDB({
+            id: tempPhoto.publicId,
+            url: tempPhoto.photoUrl,
+            userId: senderId,
+            displayName: 'Instagram',
+            platform: 'instagram',
+            timestamp: new Date().toISOString(),
+            type: 'photo'
+          });
+          
+          igUserTempPhotos.delete(senderId);
+        }
+      }, 300000);
+      
+      igUserTempPhotos.set(senderId, {
+        photoUrl: uploadResult.secure_url,
+        publicId: uploadResult.public_id,
+        timeoutId: timeoutId,
+        timestamp: Date.now()
+      });
+      
+      await sendInstagramMessage(senderId, '🖼️ 照片已接收！\n\n📌 【圖文隨筆】使用說明：\n✅ 5分鐘內輸入文字 → 變成「圖文隨筆」\n⏰ 超過5分鐘沒打字 → 自動存入「相簿」\n📸 連續傳多張照片 → 全部進「相簿」\n\n✨ 現在輸入文字，就能完成圖文隨筆！');
+    }
+    
+  } catch (error) {
+    console.error('處理 Instagram 圖片失敗:', error);
+  }
+}
+
+// ===== 發送 Instagram 訊息（私密回覆）=====
+async function sendInstagramMessage(recipientId, text) {
+  if (!IG_ACCESS_TOKEN) {
+    console.log('⚠️ 未設定 IG_ACCESS_TOKEN，無法發送回覆');
+    return;
+  }
+  
+  try {
+    const url = `https://graph.facebook.com/v22.0/me/messages?access_token=${IG_ACCESS_TOKEN}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipient: { id: recipientId },
+        message: { text: text }
+      })
+    });
+    
+    const result = await response.json();
+    console.log('📤 Instagram 回覆發送:', result);
+  } catch (error) {
+    console.error('發送 Instagram 訊息失敗:', error);
+  }
+}
   // 處理文字訊息
   if (event.type === 'message' && event.message.type === 'text') {
     const userId = event.source.userId;
@@ -460,4 +662,14 @@ process.on('SIGINT', async () => {
   console.log('正在關閉伺服器...');
   await mongoClient.close();
   process.exit(0);
+});
+// ===== 測試 Instagram 訊息發送（需 authMiddleware）=====
+app.post('/api/test-ig-message', authMiddleware, async (req, res) => {
+  const { userId, text } = req.body;
+  if (!userId || !text) {
+    return res.status(400).json({ error: '需要 userId 和 text' });
+  }
+  
+  await sendInstagramMessage(userId, text);
+  res.json({ success: true, message: '已發送' });
 });
