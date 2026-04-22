@@ -182,31 +182,55 @@ app.get('/admin', authMiddleware, (req, res) => {
 });
 
 // ===== 相簿 API =====
+// 儲存最後發佈時間（記憶體中，重啟會重置，但夠用了）
+let lastPostedTime = null;
+
 app.get('/api/images', async (req, res) => {
   try {
-    const { cursor } = req.query;
+    const { cursor, since } = req.query;
+    
+    // 如果 Make 有傳 since 參數，就用它；否則用記憶體中的時間
+    let sinceTime = since || lastPostedTime;
+    
     const query = cloudinary.search
       .expression('folder:line_uploads')
       .sort_by('created_at', 'desc')
-      .max_results(8);
+      .max_results(20);  // 一次抓多一點，避免遺漏
 
     if (cursor) query.next_cursor(cursor);
-
+    
     const result = await query.execute();
+    
+    // 過濾照片：只保留 sinceTime 之後上傳的
+    let images = result.resources;
+    if (sinceTime) {
+      const sinceDate = new Date(sinceTime);
+      images = images.filter(img => new Date(img.created_at) > sinceDate);
+      console.log(`📸 過濾後找到 ${images.length} 張新照片 (自從 ${sinceTime})`);
+    } else {
+      console.log(`📸 找到 ${images.length} 張照片 (首次執行)`);
+    }
+    
+    // 如果有新照片，更新 lastPostedTime 為最新那張的時間
+    if (images.length > 0) {
+      lastPostedTime = images[0].created_at;
+    }
+    
     res.json({
-      images: result.resources.map(img => ({ 
+      images: images.map(img => ({ 
         url: img.secure_url, 
         time: img.created_at, 
         public_id: img.public_id 
       })),
-      nextCursor: result.next_cursor
+      nextCursor: result.next_cursor,
+      lastPostedTime: lastPostedTime  // 回傳給 Make 下次使用
     });
+    
   } catch (error) { 
     console.error('讀取照片失敗:', error);
     res.status(500).send(error.message); 
   }
 });
-
 app.get('/api/messages', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
