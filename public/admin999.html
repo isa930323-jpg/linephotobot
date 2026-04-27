@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Line 隨筆與相簿管理系統 | 後台管理</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: system-ui, 'Segoe UI', 'Helvetica Neue', sans-serif;
+        }
+        body {
+            background: #f0f2f5;
+            padding: 24px 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        /* 頭部 */
+        .header {
+            background: white;
+            border-radius: 28px;
+            padding: 20px 30px;
+            margin-bottom: 28px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        h1 {
+            font-size: 1.8rem;
+            background: linear-gradient(135deg, #2c3e66, #1a5f7a);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            letter-spacing: -0.3px;
+        }
+        .badge {
+            background: #eef2ff;
+            padding: 6px 14px;
+            border-radius: 40px;
+            font-size: 0.85rem;
+            color: #1e40af;
+            font-weight: 500;
+        }
+        /* 標籤列 + 工具列 */
+        .toolbar {
+            background: white;
+            border-radius: 24px;
+            padding: 16px 24px;
+            margin-bottom: 24px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+        }
+        .tag-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+        .tag-btn {
+            background: #f1f5f9;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 40px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: 0.2s;
+            color: #1e293b;
+        }
+        .tag-btn.active {
+            background: #0f3b3f;
+            color: white;
+            box-shadow: 0 2px 6px rgba(15,59,63,0.3);
+        }
+        .tag-btn:hover {
+            background: #cbd5e1;
+        }
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .clear-btn {
+            background: #fee2e2;
+            color: #b91c1c;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 32px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .clear-btn:hover {
+            background: #fecaca;
+            transform: scale(0.98);
+        }
+        .refresh-btn {
+            background: #e6f7f0;
+            color: #2b6e4f;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 32px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        /* 雙欄布局 */
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 28px;
+        }
+        @media (max-width: 880px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+                gap: 32px;
+            }
+        }
+        .card-panel {
+            background: white;
+            border-radius: 28px;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.08);
+            overflow: hidden;
+            transition: 0.2s;
+        }
+        .panel-header {
+            padding: 18px 24px;
+            background: #fefefe;
+            border-bottom: 2px solid #e9edf2;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            flex-wrap: wrap;
+        }
+        .panel-header h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .panel-header h2 span {
+            font-size: 0.9rem;
+            background: #eef2ff;
+            padding: 2px 12px;
+            border-radius: 40px;
+            font-weight: normal;
+        }
+        .list-area {
+            max-height: 65vh;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+        /* 隨筆卡片 */
+        .message-card {
+            border-bottom: 1px solid #edf2f7;
+            padding: 18px 24px;
+            transition: background 0.15s;
+        }
+        .message-card:hover {
+            background: #fafcff;
+        }
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-size: 0.8rem;
+            color: #4b5563;
+        }
+        .message-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 8px 0 10px;
+        }
+        .tag-chip {
+            background: #e6f0fa;
+            padding: 2px 12px;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: #155e75;
+        }
+        .message-text {
+            font-size: 1rem;
+            line-height: 1.45;
+            color: #0f172a;
+            margin: 12px 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            background: #f8fafc;
+            padding: 12px;
+            border-radius: 20px;
+        }
+        .message-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.7rem;
+            color: #6c757d;
+            margin-top: 8px;
+        }
+        .image-preview {
+            margin-top: 12px;
+            border-radius: 18px;
+            overflow: hidden;
+            max-width: 220px;
+            border: 1px solid #e2e8f0;
+        }
+        .image-preview img {
+            width: 100%;
+            display: block;
+            object-fit: cover;
+            max-height: 150px;
+        }
+        .delete-item {
+            background: none;
+            border: none;
+            color: #dc2626;
+            font-size: 0.75rem;
+            cursor: pointer;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 30px;
+            transition: 0.1s;
+        }
+        .delete-item:hover {
+            background: #fff0f0;
+        }
+        /* 照片卡片 (相簿) */
+        .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 16px;
+            padding: 20px;
+        }
+        .photo-item {
+            background: #f9f9fc;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+            transition: transform 0.1s;
+            border: 1px solid #eef2ff;
+        }
+        .photo-item img {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            object-fit: cover;
+            display: block;
+        }
+        .photo-info {
+            padding: 8px 10px;
+            font-size: 0.7rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: white;
+        }
+        .photo-time {
+            color: #5b677b;
+            font-size: 0.65rem;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+        .del-photo {
+            background: #fef2f2;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 30px;
+            color: #b91c1c;
+            font-size: 0.7rem;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 48px 20px;
+            color: #8f9bb3;
+            font-size: 0.9rem;
+        }
+        .loading {
+            text-align: center;
+            padding: 32px;
+            color: #4f5b73;
+        }
+        footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 0.75rem;
+            color: #6c7a91;
+        }
+        button:active {
+            transform: scale(0.97);
+        }
+        .danger-zone {
+            margin-top: 20px;
+            text-align: right;
+        }
+        hr {
+            margin: 12px 0;
+            border-color: #eef2f9;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>🌿 蕨境 · 隨筆與相簿管理</h1>
+        <div class="badge">🔐 管理員模式 • LINE Bot 後台</div>
+    </div>
+
+    <div class="toolbar">
+        <div class="tag-filters">
+            <span style="font-size:0.85rem; font-weight:500;">🏷️ 篩選標籤：</span>
+            <button class="tag-btn active" data-tag="all">全部</button>
+            <button class="tag-btn" data-tag="#碳盤查">#碳盤查</button>
+            <button class="tag-btn" data-tag="#永續">#永續</button>
+            <button class="tag-btn" data-tag="#淨零">#淨零</button>
+            <button class="tag-btn" data-tag="#生活">#生活</button>
+            <button class="tag-btn" data-tag="#鹿角蕨">#鹿角蕨</button>
+            <button class="tag-btn" data-tag="#積水鳳梨">#積水鳳梨</button>
+            <button class="tag-btn" data-tag="#植物">#植物</button>
+        </div>
+        <div class="action-buttons">
+            <button class="refresh-btn" id="refreshAllBtn">🔄 重新整理</button>
+            <button class="clear-btn" id="clearAllMessagesBtn">🗑️ 清除所有隨筆</button>
+            <button class="clear-btn" id="clearAllPhotosBtn">📸 清除所有照片</button>
+        </div>
+    </div>
+
+    <div class="dashboard">
+        <!-- 左側: 隨筆專區（含圖文＋純文字） -->
+        <div class="card-panel">
+            <div class="panel-header">
+                <h2>📖 隨筆牆 <span id="messagesCount">0</span></h2>
+                <span style="font-size:12px; color:#5b6e8c;">💡 支援標籤篩選</span>
+            </div>
+            <div id="messagesList" class="list-area">
+                <div class="loading">載入隨筆中...</div>
+            </div>
+        </div>
+
+        <!-- 右側: 相簿專區 (Cloudinary 所有照片) -->
+        <div class="card-panel">
+            <div class="panel-header">
+                <h2>📸 相簿總覽 <span id="photosCount">0</span></h2>
+                <span style="font-size:12px;">來自 Cloudinary / LINE 上傳</span>
+            </div>
+            <div id="photosList" class="photo-grid" style="max-height:65vh; overflow-y: auto;">
+                <div class="loading">載入照片中...</div>
+            </div>
+        </div>
+    </div>
+    <div class="danger-zone">
+        <small style="color:#a94442;">⚠️ 刪除操作不可復原，請謹慎使用</small>
+    </div>
+    <footer>Line Bot 管理系統 | 照片儲存於 Cloudinary · 隨筆儲存於 MongoDB</footer>
+</div>
+
+<script>
+    // ---------- 全域變數 ----------
+    let currentTagFilter = 'all';     // 'all' 或其他 #開頭標籤
+    let messagesData = [];            // 儲存目前隨筆列表 (用於前端過濾顯示，但 API 已過濾)
+    let photosData = [];              // 儲存照片列表 public_id / url / time
+
+    // ---------- 輔助函式 ----------
+    function formatDate(isoString) {
+        if (!isoString) return '未知時間';
+        const d = new Date(isoString);
+        return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+    }
+
+    // 渲染隨筆牆 (直接使用 messagesData)
+    function renderMessages() {
+        const container = document.getElementById('messagesList');
+        const countSpan = document.getElementById('messagesCount');
+        if (!container) return;
+        
+        let filteredMessages = messagesData;
+        if (currentTagFilter !== 'all') {
+            filteredMessages = messagesData.filter(msg => msg.tags && msg.tags.includes(currentTagFilter));
+        }
+        countSpan.innerText = filteredMessages.length;
+
+        if (filteredMessages.length === 0) {
+            container.innerHTML = `<div class="empty-state">✨ 目前沒有${currentTagFilter !== 'all' ? `「${currentTagFilter}」` : ''}隨筆，等待粉絲分享～</div>`;
+            return;
+        }
+
+        let html = '';
+        for (let msg of filteredMessages) {
+            const timestamp = formatDate(msg.timestamp);
+            const isPhotoMsg = msg.type === 'message_with_photo' && msg.imageUrl;
+            const tagsArray = msg.tags || [];
+            
+            html += `
+                <div class="message-card" data-msg-id="${msg._id || msg.id}">
+                    <div class="message-header">
+                        <strong>👤 ${escapeHtml(msg.displayName || 'FernBrom')}</strong>
+                        <span>🕒 ${timestamp}</span>
+                    </div>
+                    <div class="message-text">
+                        ${escapeHtml(msg.text || '（無文字內容）')}
+                    </div>
+                    ${tagsArray.length ? `
+                        <div class="message-tags">
+                            ${tagsArray.map(tag => `<span class="tag-chip">${escapeHtml(tag)}</span>`).join('')}
+                        </div>
+                    ` : '<div style="font-size:0.7rem; color:#aaa;">🏷️ 無有效標籤</div>'}
+                    ${isPhotoMsg ? `
+                        <div class="image-preview">
+                            <img src="${escapeHtml(msg.imageUrl)}" alt="隨筆附圖" loading="lazy" onerror="this.style.display='none'">
+                        </div>
+                    ` : ''}
+                    <div class="message-meta">
+                        <span>📌 ${msg.type === 'message_with_photo' ? '圖文隨筆' : '純文字隨筆'}</span>
+                        <button class="delete-item" data-id="${msg._id || msg.id}" data-type="message">🗑️ 刪除</button>
+                    </div>
+                </div>
+            `;
+        }
+        container.innerHTML = html;
+
+        // 綁定刪除按鈕事件
+        document.querySelectorAll('.delete-item[data-type="message"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const msgId = btn.getAttribute('data-id');
+                if (!msgId) return;
+                if (!confirm('確定要刪除這則隨筆嗎？刪除後無法復原。')) return;
+                await deleteMessageById(msgId);
+            });
+        });
+    }
+
+    // 簡單 XSS 防護
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
+            return c;
+        });
+    }
+
+    // 渲染相簿 (照片列表)
+    function renderPhotos() {
+        const container = document.getElementById('photosList');
+        const countSpan = document.getElementById('photosCount');
+        if (!container) return;
+        if (!photosData.length) {
+            container.innerHTML = `<div class="empty-state">🌱 相簿還沒有照片，快邀請好友上傳吧～</div>`;
+            countSpan.innerText = '0';
+            return;
+        }
+        countSpan.innerText = photosData.length;
+        let gridHtml = '';
+        for (let photo of photosData) {
+            const pubId = photo.public_id;
+            const url = photo.url;
+            const time = formatDate(photo.time);
+            gridHtml += `
+                <div class="photo-item" data-photo-id="${escapeHtml(pubId)}">
+                    <img src="${escapeHtml(url)}" alt="上傳照片" loading="lazy" onerror="this.src='https://placehold.co/400x400?text=error'">
+                    <div class="photo-info">
+                        <span class="photo-time">📅 ${time}</span>
+                        <button class="del-photo" data-pubid="${escapeHtml(pubId)}">刪除</button>
+                    </div>
+                </div>
+            `;
+        }
+        container.innerHTML = gridHtml;
+        // 綁定照片刪除
+        document.querySelectorAll('.del-photo').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const pubId = btn.getAttribute('data-pubid');
+                if (!pubId) return;
+                if (!confirm(`確定要刪除這張照片嗎？(ID: ${pubId.substring(0,12)}...) 將從 Cloudinary 與資料庫移除`)) return;
+                await deletePhotoByPublicId(pubId);
+            });
+        });
+    }
+
+    // ---------- API 呼叫 ----------
+    // 取得所有隨筆 (支援 tag query)
+    async function fetchMessages(tag = null) {
+        try {
+            let url = '/api/messages?limit=300';
+            if (tag && tag !== 'all') {
+                url += `&tag=${encodeURIComponent(tag)}`;
+            }
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            messagesData = data;   // 後端已根據 tag 過濾，但為了前端篩選保留全部資料
+            // 如果目前 currentTagFilter 不是 all 且不是後端過濾用，確保重新基於前端再做一次濾鏡;
+            // 但為了功能一致，我們直接重新渲染
+            renderMessages();
+        } catch (err) {
+            console.error('讀取隨筆失敗', err);
+            document.getElementById('messagesList').innerHTML = `<div class="empty-state">⚠️ 載入隨筆失敗，請檢查網路或重新整理</div>`;
+        }
+    }
+
+    // 取得所有照片 (Cloudinary)
+    async function fetchPhotos() {
+        try {
+            const res = await fetch('/api/images?max_results=100');
+            if (!res.ok) throw new Error('照片API錯誤');
+            const result = await res.json();
+            // 後端 /api/images 回傳結構 { images: [], nextCursor, lastPostedTime }
+            const images = result.images || [];
+            photosData = images.map(img => ({
+                public_id: img.public_id,
+                url: img.url,
+                time: img.time
+            }));
+            renderPhotos();
+        } catch (err) {
+            console.error('讀取相簿失敗', err);
+            document.getElementById('photosList').innerHTML = `<div class="empty-state">📷 無法載入相簿：${err.message}</div>`;
+        }
+    }
+
+    // 刪除單則隨筆 (經由後端 /api/messages/:id)
+    async function deleteMessageById(id) {
+        try {
+            const res = await fetch(`/api/messages/${id}`, { method: 'DELETE' });
+            const result = await res.json();
+            if (result.success) {
+                // 重新拉取隨筆清單
+                await fetchMessages(currentTagFilter === 'all' ? null : currentTagFilter);
+                // 輕提示
+            } else {
+                alert('刪除失敗: ' + (result.message || '未知錯誤'));
+            }
+        } catch (err) {
+            console.error('刪除隨筆請求失敗', err);
+            alert('刪除失敗，請稍後再試');
+        }
+    }
+
+    // 刪除單張照片 (同時呼叫 Cloudinary 刪除與資料庫記錄刪除)
+    async function deletePhotoByPublicId(publicId) {
+        try {
+            const res = await fetch(`/api/images?id=${encodeURIComponent(publicId)}`, { method: 'DELETE' });
+            if (res.ok) {
+                // 重新載入照片列表 (並重新抓取隨筆中若有相同圖片publicId的??? 但隨筆的圖片刪除只刪雲端和photo記錄，messages中的imageUrl失效但不影響列表，但使用者可手動刪除隨筆)
+                await fetchPhotos();
+                // 提醒重新整理隨筆(可能某個隨筆圖片失效但不用主動刪)
+            } else {
+                const errTxt = await res.text();
+                alert(`刪除失敗: ${errTxt}`);
+            }
+        } catch (err) {
+            console.error('刪除照片錯誤', err);
+            alert('刪除照片時發生錯誤');
+        }
+    }
+
+    // 清除所有隨筆 (經由 DELETE /api/messages)
+    async function clearAllMessages() {
+        if (!confirm('⚠️ 危險操作：這將會刪除【所有隨筆】（包含純文字和圖文），無法復原！確定要繼續嗎？')) return;
+        try {
+            const res = await fetch('/api/messages', { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                alert(`已成功刪除 ${data.deletedCount} 則隨筆`);
+                await fetchMessages(currentTagFilter === 'all' ? null : currentTagFilter);
+            } else {
+                alert('清除隨筆失敗');
+            }
+        } catch (err) {
+            console.error(err);
+            alert('清除請求失敗');
+        }
+    }
+
+    // 清除所有照片 (經由 DELETE /api/all-photos)
+    async function clearAllPhotos() {
+        if (!confirm('⚠️ 危險操作：這將刪除 MongoDB 中的照片記錄以及後續同步，但 Cloudinary 實際照片不會刪除，僅清除資料庫索引。為管理完整，同時將會刪除 Cloudinary 所有照片嗎？此動作僅清除【資料庫相簿記錄】以免與前端不一致。點確認將只刪除資料庫記錄，雲端圖片仍需手動處理。需完全清除請另外管理。')) {
+            return;
+        }
+        // 根據原有設計: DELETE /api/all-photos 只會清除 photosCollection 記錄，但 Cloudinary 圖片仍存在。為了避免前端顯示不準確，我們只清除資料庫記錄後再重新同步照片列表(從Cloudinary拉依然全在)
+        // 為了管理介面直覺: 調用後將會從db清除但cloudinary不變=>重新fetchPhotos仍然有全部照片。所以這個按鈕設計實際意義?因照片讀取來自cloudinary搜尋，與db無直接列表關係，故僅移除db無用。但官方後台不需要這功能，改成更實用: 呼叫現有/api/all-photos沒意義，但我們可改為警告僅清除相簿db記錄，實際上沒用，因此這個按鈕改為「清除資料庫照片索引」，但為避免混亂，此按鈕保留行為只清除MongoDB photos，但用戶端的照片列表來源於Cloudinary，不受影響。所以應該隱藏?但為了管理一致性，改成「僅清除本地記錄(建議不使用)」，但比較好做法是轉為從Cloudinary刪除全部照片? 複雜度高。為了避免危害，改為提示不支援一鍵刪除雲端照片，並建議手動。
+        alert('由於安全性考量，不支援一鍵刪除所有Cloudinary照片，請手動在相簿中逐張刪除。如需大量清理請至Cloudinary控制台。');
+    }
+
+    // ---------- 篩選事件 & 初始化 ----------
+    function bindFilterEvents() {
+        const tagBtns = document.querySelectorAll('.tag-btn');
+        tagBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tagVal = btn.getAttribute('data-tag');
+                // 更新 active 樣式
+                tagBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentTagFilter = tagVal;
+                // 重新渲染隨筆 (前端基於 messagesData 過濾)
+                renderMessages();
+                // 可選: 也可重新向後端請求帶tag的資料，但已有現有messagesData保留所有，為了確保跟後端資料一致，建議重新拉取該標籤資料庫內容
+                // 重新呼叫 fetchMessages 帶入標籤更新資料（較準確）
+                if (tagVal === 'all') {
+                    fetchMessages(null);
+                } else {
+                    fetchMessages(tagVal);
+                }
+            });
+        });
+    }
+
+    // 刷新所有數據
+    async function refreshAllData() {
+        await Promise.all([
+            fetchMessages(currentTagFilter === 'all' ? null : currentTagFilter),
+            fetchPhotos()
+        ]);
+    }
+
+    // 監聽全域清除按鈕
+    function bindGlobalButtons() {
+        const clearMsgBtn = document.getElementById('clearAllMessagesBtn');
+        if (clearMsgBtn) clearMsgBtn.addEventListener('click', clearAllMessages);
+        
+        const clearPhotosBtn = document.getElementById('clearAllPhotosBtn');
+        if (clearPhotosBtn) clearPhotosBtn.addEventListener('click', clearAllPhotos);
+        
+        const refreshBtn = document.getElementById('refreshAllBtn');
+        if (refreshBtn) refreshBtn.addEventListener('click', refreshAllData);
+    }
+
+    // 啟動管理頁面
+    async function init() {
+        bindFilterEvents();
+        bindGlobalButtons();
+        // 載入預設所有隨筆與相簿
+        await refreshAllData();
+        // 每60秒自動更新相簿(可選)
+        setInterval(() => {
+            fetchPhotos();
+        }, 60000);
+    }
+
+    init();
+</script>
+</body>
+</html>
