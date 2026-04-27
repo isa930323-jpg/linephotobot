@@ -185,6 +185,7 @@ app.get('/admin', authMiddleware, (req, res) => {
 
 // 專門記錄 Make 已發過的照片（避免重複發帖）
 let makeLastPostedPublicId = null;
+let lastPostedTime = null;
 
 app.get('/api/images', async (req, res) => {
   try {
@@ -212,17 +213,17 @@ app.get('/api/images', async (req, res) => {
       console.log(`📸 找到 ${images.length} 張照片 (首次執行)`);
     }
     
-    // 🆕 只有 Make 呼叫時（forMake=true），才過濾掉已發過的照片
+    // 只有 Make 呼叫時（forMake=true），才過濾掉已發過的照片
     if (forMake === 'true' && makeLastPostedPublicId) {
       const index = images.findIndex(img => img.public_id === makeLastPostedPublicId);
       if (index !== -1) {
         const beforeCount = images.length;
-        images = images.slice(0, index);  // 只保留這張照片之前的（更新的）
+        images = images.slice(0, index);
         console.log(`📸 Make 模式：過濾掉已發過的照片 ${makeLastPostedPublicId}，從 ${beforeCount} 張減少到 ${images.length} 張`);
       }
     }
     
-    // 🆕 只有 Make 呼叫時，才更新已發記錄為第一張（最新的）
+    // 只有 Make 呼叫時，才更新已發記錄為第一張（最新的）
     if (forMake === 'true' && images.length > 0) {
       makeLastPostedPublicId = images[0].public_id;
       console.log(`📸 Make 模式：更新已發記錄為 ${makeLastPostedPublicId}`);
@@ -248,17 +249,7 @@ app.get('/api/images', async (req, res) => {
     res.status(500).send(error.message); 
   }
 });
-// 在 app.get('/api/images', ...) 之前加上這行
-let lastPostedTime = null;  // 👈 加上這行
 
-app.get('/api/images', async (req, res) => {
-  try {
-    const { cursor, since, forMake } = req.query;
-    
-    let sinceTime = since || lastPostedTime;  // 現在可以正常使用了
-    // ... 其餘程式碼不變
-  }
-});
 app.get('/api/messages', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
