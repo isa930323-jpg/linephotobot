@@ -248,7 +248,17 @@ app.get('/api/images', async (req, res) => {
     res.status(500).send(error.message); 
   }
 });
+// 在 app.get('/api/images', ...) 之前加上這行
+let lastPostedTime = null;  // 👈 加上這行
 
+app.get('/api/images', async (req, res) => {
+  try {
+    const { cursor, since, forMake } = req.query;
+    
+    let sinceTime = since || lastPostedTime;  // 現在可以正常使用了
+    // ... 其餘程式碼不變
+  }
+});
 app.get('/api/messages', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
