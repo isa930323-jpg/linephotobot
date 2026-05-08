@@ -184,64 +184,60 @@ app.get('/admin', authMiddleware, (req, res) => {
 // ===== 相簿 API =====
 
 // 專門記錄 Make 已發過的照片（避免重複發帖）
+// ===== 相簿 API =====
+
+// 專門記錄 Make 已發過的照片（避免重複發帖）
 let makeLastPostedPublicId = null;
 let lastPostedTime = null;
 
 app.get('/api/images', async (req, res) => {
   try {
-    const { cursor, since, forMake } = req.query;
+    const { cursor, forMake } = req.query;
     
-    // 如果 Make 有傳 since 參數，就用它；否則用記憶體中的時間
-    let sinceTime = since || lastPostedTime;
-    
+    // 直接從 Cloudinary 讀取所有照片，不使用 since 過濾（避免刪除後重新整理出問題）
     const query = cloudinary.search
       .expression('folder:line_uploads')
       .sort_by('created_at', 'desc')
-      .max_results(20);
+      .max_results(30);  // 增加每頁數量
 
     if (cursor) query.next_cursor(cursor);
     
     const result = await query.execute();
+    const images = result.resources || [];
     
-    // 過濾照片：只保留 sinceTime 之後上傳的
-    let images = result.resources;
-    if (sinceTime) {
-      const sinceDate = new Date(sinceTime);
-      images = images.filter(img => new Date(img.created_at) > sinceDate);
-      console.log(`📸 過濾後找到 ${images.length} 張新照片 (自從 ${sinceTime})`);
-    } else {
-      console.log(`📸 找到 ${images.length} 張照片 (首次執行)`);
-    }
+    console.log(`📸 找到 ${images.length} 張照片 (總計)`);
     
     // 只有 Make 呼叫時（forMake=true），才過濾掉已發過的照片
+    let filteredImages = [...images];
     if (forMake === 'true' && makeLastPostedPublicId) {
-      const index = images.findIndex(img => img.public_id === makeLastPostedPublicId);
+      const index = filteredImages.findIndex(img => img.public_id === makeLastPostedPublicId);
       if (index !== -1) {
-        const beforeCount = images.length;
-        images = images.slice(0, index);
-        console.log(`📸 Make 模式：過濾掉已發過的照片 ${makeLastPostedPublicId}，從 ${beforeCount} 張減少到 ${images.length} 張`);
+        const beforeCount = filteredImages.length;
+        filteredImages = filteredImages.slice(0, index);
+        console.log(`📸 Make 模式：過濾掉已發過的照片 ${makeLastPostedPublicId}，從 ${beforeCount} 張減少到 ${filteredImages.length} 張`);
       }
     }
     
     // 只有 Make 呼叫時，才更新已發記錄為第一張（最新的）
-    if (forMake === 'true' && images.length > 0) {
-      makeLastPostedPublicId = images[0].public_id;
+    if (forMake === 'true' && filteredImages.length > 0) {
+      makeLastPostedPublicId = filteredImages[0].public_id;
       console.log(`📸 Make 模式：更新已發記錄為 ${makeLastPostedPublicId}`);
     }
     
-    // 更新 lastPostedTime（給 since 參數用）
-    if (images.length > 0) {
-      lastPostedTime = images[0].created_at;
+    // 更新 lastPostedTime（供 Make 的 since 參數使用，但不再影響一般查詢）
+    if (filteredImages.length > 0) {
+      lastPostedTime = filteredImages[0].created_at;
     }
     
     res.json({
-      images: images.map(img => ({ 
+      images: filteredImages.map(img => ({ 
         url: img.secure_url, 
         time: img.created_at, 
         public_id: img.public_id 
       })),
       nextCursor: result.next_cursor,
-      lastPostedTime: lastPostedTime
+      totalCount: filteredImages.length,
+      hasMore: !!result.next_cursor
     });
     
   } catch (error) { 
