@@ -261,12 +261,11 @@
             body { padding: 12px; }
             .grid { grid-template-columns: 1fr; }
         }
-        hr {
-            margin: 8px 0;
-        }
-        .badge-photo {
-            background: #cffafe;
-            color: #0e7fa3;
+        .stat-badge {
+            background: #e2e8f0;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
         }
     </style>
 </head>
@@ -287,9 +286,9 @@
         <div class="toolbar">
             <div class="search-box">
                 <button id="refreshPhotosBtn" class="btn btn-primary">⟳ 重新整理</button>
-                <button id="clearAllPhotosBtn" class="btn btn-danger">⚠️ 清除所有照片</button>
+                <button id="clearAllPhotosBtn" class="btn btn-danger">⚠️ 清除所有照片記錄</button>
             </div>
-            <span style="font-size:0.8rem;">📌 點擊圖片可預覽大圖｜刪除同時移除 Cloudinary 與 DB 紀錄</span>
+            <span class="stat-badge" id="photoCount">📸 照片數量: --</span>
         </div>
         <div id="photosGrid" class="grid">
             <div class="loading">載入照片中...</div>
@@ -322,8 +321,9 @@
 
 <script>
     // ------ 全域狀態 ------
-    let currentPhotoPage = { cursor: null, loading: false };
-    let lastPostedTimeCache = null; // 單純用於顯示，不用於分頁
+    let currentPhotoCursor = null;
+    let isLoadingPhotos = false;
+    let allPhotosLoaded = false;
 
     // ------ 工具函數 ------
     function showToast(msg, isError = false) {
@@ -360,55 +360,93 @@
         cancelBtn.onclick = cleanup;
     }
 
-    // 預覽圖片 (新視窗)
     function previewImage(url) {
         const win = window.open();
         win.document.write(`<img src="${url}" style="max-width:100%; margin:0 auto; display:block; background:#000;" />`);
         win.document.title = '預覽相片';
     }
 
-    // ---------- 相簿 API 操作 (直接從 Cloudinary + 我們後端 /api/images) ----------
-    async function fetchPhotos(reset = true) {
+    // ---------- 修正後的相簿 API ----------
+    // 不使用 since 參數，直接從 Cloudinary 讀取所有照片（避免過濾問題）
+    async function fetchPhotos(reset = true, loadMore = false) {
+        if(isLoadingPhotos) return;
+        
         if(reset) {
-            currentPhotoPage.cursor = null;
+            currentPhotoCursor = null;
+            allPhotosLoaded = false;
             document.getElementById('photosGrid').innerHTML = '<div class="loading">載入照片中...</div>';
+            document.getElementById('photoCount').innerText = '📸 照片數量: 載入中...';
         }
-        if(currentPhotoPage.loading) return;
-        currentPhotoPage.loading = true;
+        
+        isLoadingPhotos = true;
+        
         try {
-            let url = `/api/images?max_results=30`;
-            if(currentPhotoPage.cursor) url += `&cursor=${encodeURIComponent(currentPhotoPage.cursor)}`;
+            // 不使用 since 參數，確保拿到所有照片
+            let url = '/api/images?max_results=24';
+            if(currentPhotoCursor && !reset) {
+                url += `&cursor=${encodeURIComponent(currentPhotoCursor)}`;
+            }
+            
             const resp = await fetch(url);
-            if(!resp.ok) throw new Error('無法取得照片');
+            if(!resp.ok) {
+                if(resp.status === 401) {
+                    showToast('認證失敗，請重新整理頁面', true);
+                }
+                throw new Error(`HTTP ${resp.status}`);
+            }
+            
             const data = await resp.json();
             const images = data.images || [];
             const nextCursor = data.nextCursor;
+            
             // 更新游標
-            currentPhotoPage.cursor = nextCursor || null;
+            if(nextCursor) {
+                currentPhotoCursor = nextCursor;
+            } else {
+                allPhotosLoaded = true;
+            }
+            
+            // 更新照片數量顯示
+            if(reset) {
+                document.getElementById('photoCount').innerText = `📸 照片數量: ${images.length}${nextCursor ? '+' : ''}`;
+            } else {
+                const currentCount = document.querySelectorAll('#photosGrid .card:not(.load-more-card)').length;
+                document.getElementById('photoCount').innerText = `📸 照片數量: ${currentCount + images.length}${nextCursor ? '+' : ''}`;
+            }
             
             const grid = document.getElementById('photosGrid');
-            if(reset) grid.innerHTML = '';
+            
+            if(reset) {
+                grid.innerHTML = '';
+            }
+            
             if(images.length === 0 && reset) {
                 grid.innerHTML = '<div class="empty-state">📭 目前沒有任何照片，上傳後就會出現囉</div>';
-                currentPhotoPage.loading = false;
+                isLoadingPhotos = false;
                 return;
             }
-            // 渲染每張照片卡片
+            
+            // 渲染照片卡片
             for(const img of images) {
                 const card = document.createElement('div');
                 card.className = 'card';
+                const dateStr = new Date(img.time).toLocaleString('zh-TW');
+                const shortId = img.public_id.length > 16 ? img.public_id.substring(0, 16) + '...' : img.public_id;
+                
                 card.innerHTML = `
                     <img class="card-img" src="${img.url}" alt="photo" loading="lazy">
                     <div class="card-content">
                         <div class="meta">
-                            <span>📅 ${new Date(img.time).toLocaleString()}</span>
-                            <span>🆔 ${img.public_id.substring(0,12)}...</span>
+                            <span>📅 ${dateStr}</span>
+                            <span>🆔 ${shortId}</span>
                         </div>
-                        <button class="delete-btn" data-public="${img.public_id}" data-url="${img.url}">🗑️ 刪除照片</button>
+                        <button class="delete-btn" data-public="${img.public_id.replace(/"/g, '&quot;')}" data-url="${img.url.replace(/"/g, '&quot;')}">🗑️ 刪除照片</button>
                     </div>
                 `;
+                
                 const imgEl = card.querySelector('.card-img');
                 imgEl.addEventListener('click', () => previewImage(img.url));
+                
                 const delBtn = card.querySelector('.delete-btn');
                 delBtn.addEventListener('click', async (e) => {
                     e.stopPropagation();
@@ -418,9 +456,11 @@
                             const res = await fetch(`/api/images?id=${encodeURIComponent(publicId)}`, { method: 'DELETE' });
                             if(res.ok) {
                                 showToast('✅ 照片已刪除');
+                                // 刪除後重新整理第一頁
                                 await fetchPhotos(true);
                             } else {
-                                showToast('❌ 刪除失敗', true);
+                                const errText = await res.text();
+                                showToast('❌ 刪除失敗: ' + errText, true);
                             }
                         } catch(err) {
                             showToast('刪除錯誤: '+err.message, true);
@@ -429,29 +469,59 @@
                 });
                 grid.appendChild(card);
             }
-            // 如果有更多照片且滾動加載，可做無限滾動，此處保留手動刷新即可
-            if(nextCursor) {
-                const loadMoreBtn = document.createElement('div');
-                loadMoreBtn.style.gridColumn = '1/-1';
-                loadMoreBtn.style.textAlign = 'center';
-                loadMoreBtn.style.marginTop = '12px';
-                loadMoreBtn.innerHTML = `<button class="btn btn-outline" id="loadMorePhotosBtn">載入更多照片</button>`;
-                grid.appendChild(loadMoreBtn);
-                const btn = loadMoreBtn.querySelector('#loadMorePhotosBtn');
-                btn.onclick = () => {
-                    loadMoreBtn.remove();
-                    fetchPhotos(false);
+            
+            // 如果有更多照片且不是正在加載更多，顯示載入更多按鈕
+            if(nextCursor && !allPhotosLoaded && !reset) {
+                // 如果已經有載入更多按鈕，先移除
+                const existingLoadMore = grid.querySelector('.load-more-card');
+                if(existingLoadMore) existingLoadMore.remove();
+                
+                const loadMoreCard = document.createElement('div');
+                loadMoreCard.className = 'load-more-card';
+                loadMoreCard.style.gridColumn = '1/-1';
+                loadMoreCard.style.textAlign = 'center';
+                loadMoreCard.style.marginTop = '16px';
+                loadMoreCard.style.marginBottom = '16px';
+                loadMoreCard.innerHTML = `<button class="btn btn-outline" id="loadMorePhotosBtn" style="padding: 10px 28px;">📥 載入更多照片</button>`;
+                grid.appendChild(loadMoreCard);
+                
+                const loadBtn = loadMoreCard.querySelector('#loadMorePhotosBtn');
+                loadBtn.onclick = async () => {
+                    loadMoreCard.remove();
+                    await fetchPhotos(false, true);
+                };
+            } else if(nextCursor && reset) {
+                // 第一次載入後，如果有更多，自動加載載入更多按鈕
+                const loadMoreCard = document.createElement('div');
+                loadMoreCard.className = 'load-more-card';
+                loadMoreCard.style.gridColumn = '1/-1';
+                loadMoreCard.style.textAlign = 'center';
+                loadMoreCard.style.marginTop = '16px';
+                loadMoreCard.style.marginBottom = '16px';
+                loadMoreCard.innerHTML = `<button class="btn btn-outline" id="loadMorePhotosBtn" style="padding: 10px 28px;">📥 載入更多照片</button>`;
+                grid.appendChild(loadMoreCard);
+                
+                const loadBtn = loadMoreCard.querySelector('#loadMorePhotosBtn');
+                loadBtn.onclick = async () => {
+                    loadMoreCard.remove();
+                    await fetchPhotos(false, true);
                 };
             }
+            
         } catch(err) {
-            console.error(err);
-            document.getElementById('photosGrid').innerHTML = `<div class="empty-state">⚠️ 載入失敗: ${err.message}</div>`;
+            console.error('載入照片錯誤:', err);
+            const grid = document.getElementById('photosGrid');
+            if(reset) {
+                grid.innerHTML = `<div class="empty-state">⚠️ 載入失敗: ${err.message}<br><button class="btn btn-primary" style="margin-top:16px;" onclick="location.reload()">重新整理</button></div>`;
+            } else {
+                showToast('載入更多失敗: ' + err.message, true);
+            }
         } finally {
-            currentPhotoPage.loading = false;
+            isLoadingPhotos = false;
         }
     }
 
-    // 清除所有照片 (對應後端 /api/all-photos)
+    // 清除所有照片記錄 (僅 MongoDB 記錄，不刪 Cloudinary 圖片)
     async function clearAllPhotos() {
         confirmAction('⚠️ 此操作會刪除 MongoDB photos 集合中所有照片記錄，但 Cloudinary 上的原始圖片不會刪除！僅清除資料庫索引。確定繼續嗎？', async () => {
             try {
@@ -486,11 +556,10 @@
             for(const msg of messages) {
                 const card = document.createElement('div');
                 card.className = 'card';
-                // 判斷類型
                 const hasImage = msg.imageUrl;
                 const typeBadge = hasImage ? '🖼️ 圖文隨筆' : '📄 純文字隨筆';
                 let imageHtml = '';
-                if(hasImage) {
+                if(hasImage && msg.imageUrl) {
                     imageHtml = `<img class="card-img" src="${msg.imageUrl}" alt="附圖" loading="lazy">`;
                 } else {
                     imageHtml = `<div style="background:#f1f5f9; aspect-ratio:1/1; display:flex; align-items:center; justify-content:center; color:#94a3b8;">📝 純文字</div>`;
@@ -499,13 +568,16 @@
                     `<div class="tags">${msg.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>` : 
                     `<div class="tags"><span class="tag" style="background:#e9ecef;">無有效標籤</span></div>`;
                 
+                const dateStr = new Date(msg.timestamp).toLocaleString('zh-TW');
+                const shortText = msg.text.length > 200 ? msg.text.substring(0, 200) + '…' : msg.text;
+                
                 card.innerHTML = `
                     ${imageHtml}
                     <div class="card-content">
-                        <div class="message-text">${escapeHtml(msg.text.substring(0, 280))}${msg.text.length>280 ? '…' : ''}</div>
+                        <div class="message-text">${escapeHtml(shortText)}</div>
                         ${tagsHtml}
                         <div class="meta">
-                            <span>📅 ${new Date(msg.timestamp).toLocaleString()}</span>
+                            <span>📅 ${dateStr}</span>
                             <span>${typeBadge}</span>
                         </div>
                         <button class="delete-btn" data-id="${msg._id}" data-hasImg="${hasImage}">🗑️ 刪除此隨筆</button>
@@ -524,7 +596,8 @@
                             const res = await fetch(`/api/messages/${msgId}`, { method: 'DELETE' });
                             if(res.ok) {
                                 showToast('✅ 隨筆已刪除');
-                                fetchMessages(tag);
+                                const currentTag = document.getElementById('tagFilter').value;
+                                fetchMessages(currentTag);
                             } else {
                                 showToast('❌ 刪除失敗', true);
                             }
@@ -565,15 +638,11 @@
             if(m === '<') return '&lt;';
             if(m === '>') return '&gt;';
             return m;
-        }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
-            return c;
         });
     }
 
     // ----- Tab 切換邏輯 -----
-    let currentTab = 'photos';
     function switchTab(tabId) {
-        currentTab = tabId;
         document.querySelectorAll('.panel').forEach(panel => panel.classList.remove('active-panel'));
         document.getElementById(`${tabId}Panel`).classList.add('active-panel');
         document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -617,22 +686,13 @@
         });
     }
 
-    // 啟動時依當前tab載入資料，並偵測認證錯誤 (401)
-    async function initialLoad() {
-        bindEvents();
-        // 預設載入相簿，若遇到401重新導向登入 (但因為已經basic auth，瀏覽器會彈窗，不需額外)
-        try {
-            await fetchPhotos(true);
-        } catch(e) {
-            console.warn('initial photos error', e);
-        }
-        // 預載訊息但不顯示
-        const tagVal = document.getElementById('tagFilter')?.value || '';
-        fetchMessages(tagVal).catch(e=>console.warn);
-    }
-
-    // 處理全局fetch攔截基本認證失敗：不用額外動作，express-basic-auth會觸發401瀏覽器彈窗
-    initialLoad();
+    // 啟動
+    bindEvents();
+    fetchPhotos(true);
+    
+    // 預載隨筆（但不顯示，等切換 tab 時才載入）
+    const tagVal = document.getElementById('tagFilter')?.value || '';
+    fetchMessages(tagVal);
 </script>
 </body>
 </html>
